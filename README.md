@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/icon.png" width="88" alt="轻截 LightSnip 图标"></p>
+
 # 轻截 LightSnip · 免费开源 Windows 截图软件
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-6059da.svg)](LICENSE)

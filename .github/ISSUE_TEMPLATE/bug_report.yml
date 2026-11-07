@@ -1,0 +1,29 @@
+name: 问题反馈 / Bug report
+description: 报告截图、长截图、OCR、贴图、标注或翻译问题
+body:
+  - type: input
+    id: version
+    attributes:
+      label: 软件版本
+      placeholder: v0.27
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Windows 与显示器环境
+      description: 请填写 Windows 版本、屏幕数量、分辨率及缩放比例。
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现步骤与实际结果
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期结果
+  - type: textarea
+    id: additional
+    attributes:
+      label: 补充信息或使用示例内容生成的截图

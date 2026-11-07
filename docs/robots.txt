@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://zip1824.github.io/LightSnip/sitemap.xml

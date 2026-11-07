@@ -1,0 +1,14 @@
+-r requirements.txt
+PySide6==6.12.0
+onnxruntime==1.31.1
+numpy==2.5.4
+opencv-python==5.0.0.93
+Pillow==13.0.0
+PyYAML==6.0.3
+Shapely==2.2.0
+pyclipper==1.4.0
+protobuf==7.36.2
+six==1.17.0
+flatbuffers==25.12.19
+PyInstaller==6.22.3
+pyinstaller-hooks-contrib==2026.9
