@@ -2,11 +2,12 @@
 
 [中文说明](README.md) · [Download Windows portable release](https://github.com/ZiP1824/LightSnip/releases/latest)
 
-LightSnip is a no-account Windows screenshot application with scrolling capture, local OCR, annotations, pinned images, mosaic brush, screenshot translation, custom hotkeys, multi-monitor capture and silent MP4 recording.
+LightSnip is a no-account Windows screenshot application with delayed capture, scrolling capture, local OCR, annotations, pinned images, mosaic brush, screenshot translation, custom hotkeys, multi-monitor capture and silent MP4 recording.
 
 ## Features
 
 - Region capture with move and resize controls; automatic window, control and text-region detection.
+- Delayed screenshots: configurable 1–60 second countdown for menus and popups; a compact, translucent centered card with shadow and directional easing to avoid the pointer. It does not steal focus and allows clicks through.
 - Scrolling screenshots inside a selected region, with vertical/horizontal stitching and live preview.
 - Local OCR with an image preview and editable recognized text.
 - Shapes, multiple arrow styles, freehand drawing, highlighter, text and numbered markers.
@@ -16,6 +17,8 @@ LightSnip is a no-account Windows screenshot application with scrolling capture,
 - Configurable global hotkeys, startup option and remembered save directory.
 
 Press **Ctrl+Shift+1** to capture; **Enter / Ctrl+C** copies and closes; **L** starts scrolling capture; **Shift+C** runs OCR; **Ctrl+T** pins the image. Direct clipboard capture does not create screenshot-history files.
+
+**Ctrl+Shift+4** starts delayed capture by default. Set the delay in Configuration → Capture and customize its hotkey under Hotkeys/Actions. Existing saved bindings are preserved. Start the countdown before opening the menu or popup; pressing the same hotkey again cancels it.
 
 ## Install
 

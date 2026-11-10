@@ -9,8 +9,8 @@ from PySide6.QtWidgets import (QDialog,QWidget,QVBoxLayout,QHBoxLayout,QFormLayo
 from theme import LIGHT_STYLE,ThemedComboBox
 from ui_icons import lucide
 
-DEFAULT_KEYS={1:'Ctrl+Shift+1',2:'Ctrl+Shift+2',3:'Ctrl+Shift+3',4:'',5:'',6:'',7:'',8:'F8'}
-ACTION_NAMES={1:'截图',2:'贴图',3:'文字翻译',4:'恢复上次关闭的贴图',5:'关闭所有贴图窗口',6:'隐藏/显示所有贴图窗口',7:'自定义/延时截图',8:'切换窗口边界识别（截图中）'}
+DEFAULT_KEYS={1:'Ctrl+Shift+1',2:'Ctrl+Shift+2',3:'Ctrl+Shift+3',4:'',5:'',6:'',7:'Ctrl+Shift+4',8:'F8'}
+ACTION_NAMES={1:'截图',2:'贴图',3:'文字翻译',4:'恢复上次关闭的贴图',5:'关闭所有贴图窗口',6:'隐藏/显示所有贴图窗口',7:'延时截图',8:'切换窗口边界识别（截图中）'}
 CAPTURE_ONLY_ACTIONS={8}
 
 
@@ -173,7 +173,15 @@ class SettingsWindow(QDialog):
         l.addWidget(note)
         self.checkbox(l,'显示选区中心辅助线','capture/guides',False)
         self.combo(l,'左键双击动作','capture/double','复制',['复制','贴图','保存'])
-        self.spin(l,'延时截图秒数','capture/delay',3,0,60)
+        l.addWidget(QLabel('延时截图'))
+        self.spin(l,'倒计时秒数','capture/delay',3,1,60)
+        delay_note=QLabel('先启动倒计时，再打开菜单或弹窗；时间到后自动冻结画面并框选。\n半透明倒计时会避让鼠标，不抢焦点、点击穿透。快捷键可在「快捷键/动作 → 延时截图」中修改。')
+        delay_note.setObjectName('muted')
+        delay_note.setWordWrap(True)
+        l.addWidget(delay_note)
+        delay_button=QPushButton('开始延时截图')
+        delay_button.clicked.connect(self.start_delayed_capture)
+        l.addWidget(delay_button)
         l.addWidget(QLabel('选区边缘拖动调整大小；内部拖动移动；工具栏原位标注。'))
         l.addStretch()
         return f
@@ -186,6 +194,9 @@ class SettingsWindow(QDialog):
         l.addWidget(QLabel('滚轮缩放，右键可翻转、OCR、翻译、调节透明度。'))
         l.addStretch()
         return f
+
+    def start_delayed_capture(self):
+        if self.apply():self.controller.delayed_capture()
 
     def save_page(self):
         from file_names import save_directory,save_location_events
@@ -262,7 +273,7 @@ class SettingsWindow(QDialog):
 
     def about_page(self):
         f,l=self.card()
-        l.addWidget(QLabel('轻截 LightSnip 0.27'))
+        l.addWidget(QLabel('轻截 LightSnip 0.30'))
         developer=QLabel('开发者：ZiP1824')
         developer.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         l.addWidget(developer)
@@ -339,6 +350,7 @@ class SettingsWindow(QDialog):
         self.refresh_save_directory()
         self.controller.rebuild_tray()
         self.message.setText('已保存并生效。')
+        return True
 
     def refresh_save_directory(self):
         if hasattr(self,'save_dir') and not self.save_dir.isModified():

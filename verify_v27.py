@@ -5,7 +5,7 @@ import marshal
 from PyInstaller.archive.readers import CArchiveReader
 
 root=Path(__file__).parent
-bundle=root/'releases/v0.27/LightSnip'
+bundle=root/'releases'/('v'+(root/'VERSION').read_text().strip())/'LightSnip'
 archive=CArchiveReader(str(bundle/'LightSnip.exe'))
 modules=archive.open_embedded_archive('PYZ.pyz')
 forbidden=bytes.fromhex('70697870696e').decode()
@@ -40,3 +40,6 @@ for name in modules.toc:
 assert not (bundle/"models").exists()
 assert not any("ctranslate2" in str(p).lower() or "sentencepiece" in str(p).lower() for p in bundle.rglob("*"))
 print("Local translation engine, model files and fallback removed: PASS")
+
+assert modules.extract('delayed_capture') is not None
+print('Animated countdown module bundled: PASS')

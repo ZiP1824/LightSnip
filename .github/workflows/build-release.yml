@@ -31,7 +31,7 @@ jobs:
           .\.venv\Scripts\python.exe -m pip install -r requirements-build.txt
       - name: Test
         shell: pwsh
-        run: .\.venv\Scripts\python.exe -m unittest test_app test_startup test_ocr_layout test_scroll_stitcher test_file_names test_save_locations test_theme test_window_detection test_element_detection test_mosaic test_floating_placement -q
+        run: .\.venv\Scripts\python.exe -m unittest test_delayed_capture test_app test_startup test_ocr_layout test_scroll_stitcher test_file_names test_save_locations test_theme test_window_detection test_element_detection test_mosaic test_floating_placement -q
       - name: Build portable application
         shell: pwsh
         run: .\build.ps1
@@ -40,7 +40,8 @@ jobs:
         run: |
           .\.venv\Scripts\python.exe verify_v27.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $test = Start-Process -WindowStyle Hidden -FilePath .\releases\v0.27\LightSnip\LightSnip.exe -ArgumentList '--self-test','package-self-test.json' -Wait -PassThru
+          $version = (Get-Content VERSION -Raw).Trim()
+          $test = Start-Process -WindowStyle Hidden -FilePath ".\releases\v$version\LightSnip\LightSnip.exe" -ArgumentList '--self-test','package-self-test.json' -Wait -PassThru
           if ($test.ExitCode -ne 0) { throw 'Packaged self-test failed' }
           $report = Get-Content package-self-test.json -Raw | ConvertFrom-Json
           if (-not $report.ok) { throw 'Packaged self-test reported failure' }

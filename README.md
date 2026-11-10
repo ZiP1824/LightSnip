@@ -6,9 +6,9 @@
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-0078d4.svg)](https://github.com/ZiP1824/LightSnip/releases/latest)
 [![Release](https://img.shields.io/github/v/release/ZiP1824/LightSnip)](https://github.com/ZiP1824/LightSnip/releases/latest)
 
-**LightSnip 是一款免费、开源、免登录的 Windows 截图工具。** 支持区域截图、滚动长截图、OCR 文字识别、截图标注、桌面贴图、马赛克涂抹、截图翻译、多屏截图和静音录屏。提供绿色版，解压后即可使用，无需安装 Python。
+**LightSnip 是一款免费、开源、免登录的 Windows 截图工具。** 支持区域截图、延时截图、滚动长截图、OCR 文字识别、截图标注、桌面贴图、马赛克涂抹、截图翻译、多屏截图和静音录屏。提供绿色版，解压后即可使用，无需安装 Python。
 
-**Free, open-source Windows screenshot tool** with scrolling screenshots, local OCR, annotations, image pinning, mosaic brush, screenshot translation, configurable hotkeys and multi-monitor capture. [English introduction](README.en.md).
+**Free, open-source Windows screenshot tool** with delayed capture, scrolling screenshots, local OCR, annotations, image pinning, mosaic brush, screenshot translation, configurable hotkeys and multi-monitor capture. [English introduction](README.en.md).
 
 **[下载最新版 Windows 绿色版](https://github.com/ZiP1824/LightSnip/releases/latest)** · [功能介绍](https://zip1824.github.io/LightSnip/) · [报告问题](https://github.com/ZiP1824/LightSnip/issues/new/choose)
 
@@ -17,6 +17,7 @@
 | 功能 | 使用方式 |
 | --- | --- |
 | 区域截图 / 屏幕截图 | 拖动框选；选区内部可整体移动，边缘可调整大小 |
+| 延时截图 / 弹窗截图 | 1–60 秒倒计时，先启动再打开弹窗；居中半透明小卡片，四方向缓动避让鼠标 |
 | 窗口与内部元素识别 | 悬停预选窗口、控件或文字区域；滚轮切换上下层，Tab 切换整窗 |
 | 滚动长截图 / 长图拼接 | 框选后按 L，在选区内滚动；支持纵向、横向及实时预览 |
 | 本地 OCR 文字识别 | 提取中英文文字，左图右文，可编辑、复制，识别过程不联网 |
@@ -34,7 +35,7 @@
 
 ## 下载与开始使用
 
-1. 到 [Releases](https://github.com/ZiP1824/LightSnip/releases/latest) 下载 `LightSnip-v0.27-windows-x64.zip`。
+1. 到 [Releases](https://github.com/ZiP1824/LightSnip/releases/latest) 下载 `LightSnip-v0.30-windows-x64.zip`。
 2. 解压整个 `LightSnip` 文件夹，运行 `LightSnip.exe`。
 3. 默认按 **Ctrl+Shift+1** 开始截图，框选后标注、复制或保存。
 
@@ -47,6 +48,7 @@
 | Ctrl+Shift+1 | 开始截图，可在配置中修改 |
 | Ctrl+Shift+2 | 将剪贴板图片贴到桌面 |
 | Ctrl+Shift+3 | 打开文字翻译窗口 |
+| Ctrl+Shift+4 | 延时截图，可修改；旧用户已保存的绑定保留 |
 | Enter / Ctrl+C | 复制当前截图并结束截图 |
 | Ctrl+S | 快速保存到记忆目录 |
 | Ctrl+T | 置顶贴图 |
@@ -56,6 +58,12 @@
 | 鼠标滚轮 / Tab | 切换识别层级 / 切换整窗与内部元素 |
 | Ctrl+Z / Ctrl+Y | 撤销 / 重做 |
 | Esc | 取消截图 |
+
+## 延时截图：先倒计时，再打开弹窗
+
+托盘右键选择「延时截图」，或在「配置 → 截图」点击「开始延时截图」。默认倒计时 3 秒，可设置为 1–60 秒；时间到后进入框选，不会自动保存。
+
+居中的半透明小卡片带阴影，鼠标从右/左/上/下靠近时，分别以先快后慢的动画移到左/右/下/上边缘。提示不抢焦点、点击穿透；截图前先停止动画并隐藏提示。快捷键在「快捷键/动作 → 延时截图」修改，倒计时期间再次按该快捷键可取消。
 
 ## 翻译、隐私与文件保存
 
@@ -87,12 +95,12 @@ python -m venv .venv
 .\build.ps1
 ```
 
-输出位于 `releases/v0.27/LightSnip/`。GitHub Actions 提供测试、打包与 Release 发布工作流。依赖锁定为首次公开版本验证过的版本；维护升级时应重新测试。
+输出位于 `releases/v0.30/LightSnip/`。GitHub Actions 提供测试、打包与 Release 发布工作流。依赖锁定为首次公开版本验证过的版本；维护升级时应重新测试。
 
 测试：
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest test_app test_startup test_ocr_layout test_scroll_stitcher test_file_names test_save_locations test_theme test_window_detection test_element_detection test_mosaic test_floating_placement -q
+.\.venv\Scripts\python.exe -m unittest test_delayed_capture test_app test_startup test_ocr_layout test_scroll_stitcher test_file_names test_save_locations test_theme test_window_detection test_element_detection test_mosaic test_floating_placement -q
 ```
 
 ## 开源许可与开发者

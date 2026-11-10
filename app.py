@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (QApplication, QWidget, QMainWindow, QLabel,
     QToolBar, QFileDialog, QMessageBox, QInputDialog, QColorDialog, QSpinBox,
     QDialog, QTextEdit, QPlainTextEdit, QComboBox, QSplitter, QSystemTrayIcon, QMenu)
 from services import recognize, translate
+from delayed_capture import CaptureCountdown
 from settings_ui import preferences, flag, keys, LIGHT_STYLE, SettingsWindow,CAPTURE_ONLY_ACTIONS
 from ui_icons import lucide, TOOLBAR_STYLE
 from annotation_tools import AnnotationOptions,SelectionBorder,draw_arrow,tool_cursor,badge_icon,BORDER_WIDTH
@@ -1457,6 +1458,10 @@ class Home(QMainWindow):
         self.capture_screen_timer.setInterval(40)
         self.capture_screen_timer.timeout.connect(self.sync_capture_screen)
         self.capture_pending=False
+        self.delay_countdown=CaptureCountdown(self)
+        self.delay_countdown.finished.connect(self.begin_capture)
+        self.delay_countdown.cancelled.connect(self.cancel_delayed_capture)
+        QApplication.instance().aboutToQuit.connect(self.delay_countdown.dispose)
         self.last_pin=None
         self.settings_window=None
         self.setWindowTitle('轻截 LightSnip')
@@ -1486,7 +1491,7 @@ class Home(QMainWindow):
         b.clicked.connect(self.capture)
         layout.addWidget(b)
         grid=QGridLayout()
-        for i,(label,fn) in enumerate([('打开图片',self.open_image),('剪贴板贴图  Ctrl+Shift+2',self.clip_pin),('文字翻译  Ctrl+Shift+3',self.text_only)]):
+        for i,(label,fn) in enumerate([('打开图片',self.open_image),('剪贴板贴图  Ctrl+Shift+2',self.clip_pin),('文字翻译  Ctrl+Shift+3',self.text_only),('延时截图',self.delayed_capture)]):
             btn=QPushButton(label)
             btn.setMinimumHeight(56)
             btn.clicked.connect(fn)
@@ -1526,6 +1531,7 @@ class Home(QMainWindow):
         self.tray.setContextMenu(menu)
 
     def show_settings(self):
+        if self.delay_countdown.running:self.delay_countdown.cancel()
         if self.settings_window is None:self.settings_window=SettingsWindow(self)
         self.settings_window.showNormal()
         self.settings_window.raise_()
@@ -1544,14 +1550,20 @@ class Home(QMainWindow):
         for pin in active:pin.setVisible(not visible)
 
     def delayed_capture(self):
+        if self.delay_countdown.running:
+            self.delay_countdown.cancel()
+            return
         if self.capture_pending or self.overlays:return
         self.capture_pending=True
         self.was_visible=False
         if self.settings_window:self.settings_window.hide()
         self.hide()
         delay=preferences().value('capture/delay',3,type=int)
-        self.tray.showMessage('轻截',f'{delay} 秒后开始截图')
-        QTimer.singleShot(max(0,delay)*1000,self.begin_capture)
+        screen=QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
+        self.delay_countdown.start(delay,screen,keys().get(7,''))
+
+    def cancel_delayed_capture(self):
+        self.capture_pending=False
 
     def capture(self):
         if self.overlays or self.capture_pending:
