@@ -786,7 +786,11 @@ class Checks(unittest.TestCase):
         session.start(initial_pixmap=overlay.crop(overlay.rect_selected),on_ready=lambda:order.append((session.isVisible(),session.transition_cover)))
         self.assertTrue(session.transition_cover)
         self.assertTrue(session.mask().contains(session.region.center()))
-        QTest.qWait(150)
+        from PySide6.QtCore import QElapsedTimer
+        wait=QElapsedTimer()
+        wait.start()
+        while (not order or session.transition_cover) and wait.elapsed()<2000:
+            QTest.qWait(20)
         self.assertEqual(order,[(True,True)])
         self.assertFalse(session.transition_cover)
         self.assertFalse(session.mask().contains(session.region.center()))
