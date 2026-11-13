@@ -4,13 +4,14 @@ if __name__=='__main__':
 
 import ctypes
 import math
+from dataclasses import dataclass, replace
 from pathlib import Path
 import sys
 from file_names import choose_save_path,remember_saved_file,save_directory,save_new_png
 from PySide6.QtCore import (Qt, QPoint, QPointF, QEvent, QRect, QSize, QTimer, Signal, QObject,
                             QRunnable, QThreadPool, QBuffer, QIODevice, QAbstractNativeEventFilter)
-from PySide6.QtGui import (QPixmap, QPainter, QColor, QPen, QFont, QIcon, QAction, QMouseEvent,
-                           QKeySequence, QShortcut, QPolygon,QCursor)
+from PySide6.QtGui import (QPixmap, QImage, QPainter, QColor, QPen, QFont, QIcon, QAction, QMouseEvent,
+                           QKeySequence, QShortcut, QPolygon,QCursor,QTextDocument)
 from PySide6.QtWidgets import (QApplication, QWidget, QMainWindow, QLabel,
     QPushButton, QVBoxLayout, QHBoxLayout, QGridLayout, QFrame, QScrollArea,
     QToolBar, QFileDialog, QMessageBox, QInputDialog, QColorDialog, QSpinBox,
@@ -240,13 +241,83 @@ class OcrDialog(QDialog):
         self.status.setText('已复制')
 
 
-class InlineTextEdit(QPlainTextEdit):
+class InlineTextEdit(QTextEdit):
     def __init__(self,canvas):
         super().__init__(canvas)
         self.canvas=canvas
         self.format_selection=None
-        self.setPlaceholderText('输入文字…')
+        self.frame_drag=None
+        self.laying_out=False
+        self.composing=False
+        self.preedit=''
+        self.layout_timer=QTimer(self)
+        self.layout_timer.setSingleShot(True)
+        self.layout_timer.timeout.connect(self.relayout)
+        self.textChanged.connect(self.schedule_layout)
+        self.setAcceptRichText(False)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        from PySide6.QtGui import QTextOption
+        self.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+        self.document().setDocumentMargin(4)
         self.setTabChangesFocus(False)
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
+
+    def event(self,event):
+        if event.type()==QEvent.Type.ShortcutOverride and event.key() in [Qt.Key.Key_Return,Qt.Key.Key_Enter,Qt.Key.Key_Escape]:
+            event.accept()
+            return True
+        if event.type() in (QEvent.Type.MouseMove,QEvent.Type.MouseButtonPress,QEvent.Type.MouseButtonRelease):
+            if self.frame_mouse(event,event.position().toPoint()):return True
+        return super().event(event)
+
+    def schedule_layout(self):
+        if not self.laying_out:
+            self.layout_timer.start(0)
+
+    def relayout(self):
+        if self.canvas.text_editor is self:
+            self.canvas.resize_text_editor()
+
+    def inputMethodEvent(self,event):
+        self.composing=True
+        try:
+            super().inputMethodEvent(event)
+        finally:
+            self.preedit=event.preeditString()
+            self.composing=bool(self.preedit)
+        self.schedule_layout()
+
+    def viewportEvent(self,event):
+        if event.type() in (QEvent.Type.MouseMove,QEvent.Type.MouseButtonPress,QEvent.Type.MouseButtonRelease):
+            point=self.viewport().mapTo(self,event.position().toPoint())
+            if self.frame_mouse(event,point):return True
+        return super().viewportEvent(event)
+
+    def frame_mouse(self,event,point):
+        inside=self.rect().adjusted(4,4,-4,-4).contains(point)
+        if event.type()==QEvent.Type.MouseMove:
+            if not event.buttons()&Qt.MouseButton.LeftButton:
+                self.frame_drag=None
+            cursor=Qt.CursorShape.IBeamCursor if inside and self.frame_drag is None else Qt.CursorShape.SizeAllCursor
+            self.setCursor(cursor)
+            self.viewport().setCursor(cursor)
+            if self.frame_drag is not None:
+                start,origin=self.frame_drag
+                target=origin+event.globalPosition().toPoint()-start
+                x=max(0,min(target.x(),self.canvas.width()-self.width()))
+                y=max(0,min(target.y(),self.canvas.height()-self.height()))
+                self.anchor=QPoint(x,y)
+                self.move(self.anchor)
+                return True
+        elif event.type()==QEvent.Type.MouseButtonPress and not inside and event.button()==Qt.MouseButton.LeftButton:
+            self.frame_drag=(event.globalPosition().toPoint(),self.pos())
+            return True
+        elif event.type()==QEvent.Type.MouseButtonRelease and self.frame_drag is not None and event.button()==Qt.MouseButton.LeftButton:
+            self.frame_drag=None
+            return True
+        return False
     def keyPressEvent(self,event):
         if event.key()==Qt.Key.Key_Escape:
             self.canvas.cancel_text()
@@ -262,8 +333,6 @@ class InlineTextEdit(QPlainTextEdit):
         cursor=self.textCursor()
         if cursor.hasSelection():
             self.format_selection=(cursor.anchor(),cursor.position())
-            cursor.clearSelection()
-            self.setTextCursor(cursor)
         super().focusOutEvent(event)
 
     def mousePressEvent(self,event):
@@ -271,8 +340,67 @@ class InlineTextEdit(QPlainTextEdit):
         super().mousePressEvent(event)
 
 
+@dataclass(frozen=True)
+class TextMark:
+    text: str
+    html: str
+    text_width: float
+    font: QFont
+    position: QPoint
+    style: tuple
+    raster: QImage
+    logical_size: QSize
+    scale: float = 1.0
+
+    @classmethod
+    def render(cls,document,position,style,scale=1.0):
+        from PySide6.QtGui import QAbstractTextDocumentLayout,QPalette
+        size=QSize(max(1,math.ceil(min(document.idealWidth(),document.textWidth()))),
+                   max(1,math.ceil(document.size().height())))
+        # Rasterize once offscreen. Dragging and screen repaints only draw an image.
+        density=min(2.0,math.sqrt(8_000_000/(size.width()*size.height())))
+        raster=QImage(max(1,math.ceil(size.width()*density)),
+                      max(1,math.ceil(size.height()*density)),QImage.Format.Format_ARGB32_Premultiplied)
+        raster.fill(Qt.GlobalColor.transparent)
+        context=QAbstractTextDocumentLayout.PaintContext()
+        palette=QPalette()
+        palette.setColor(QPalette.ColorRole.Text,style[4])
+        context.palette=palette
+        with QPainter(raster) as painter:
+            painter.scale(density,density)
+            document.documentLayout().draw(painter,context)
+        return cls(document.toPlainText(),document.toHtml(),document.textWidth(),
+                   QFont(document.defaultFont()),QPoint(position),style,raster,size,scale)
+
+    def create_document(self):
+        document=QTextDocument()
+        document.setDefaultFont(self.font)
+        document.setHtml(self.html)
+        document.setTextWidth(self.text_width)
+        return document
+
+    def size(self):
+        return QSize(max(1,math.ceil(self.logical_size.width()*self.scale)),
+                     max(1,math.ceil(self.logical_size.height()*self.scale)))
+
+    def rect(self):
+        return QRect(self.position, self.size())
+
+
+@dataclass(frozen=True)
+class NumberMark:
+    number: int
+    position: QPoint
+    color: QColor
+    font_size: int
+
+    def radius(self):
+        return max(10,round(self.font_size*.8))
+
+
 class Canvas(QWidget):
     changed = Signal()
+    text_selected = Signal(object)
 
     def __init__(self, pix):
         super().__init__()
@@ -294,11 +422,17 @@ class Canvas(QWidget):
         self.text_bold=False
         self.text_italic=False
         self.text_editor=None
-        self.counter=1
+        self.text_marks=[]
+        self.selected_text=None
+        self.editing_text=None
+        self.text_drag=None
+        self.number_marks=[]
+        self.selected_number=None
         self.start = self.end = None
         self.stroke = []
         self.setFixedSize(self.image.size())
         self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.cursor_badge=QLabel(self)
         self.cursor_badge.setFixedSize(22,22)
         self.cursor_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -308,7 +442,12 @@ class Canvas(QWidget):
 
     def pixmap(self):
         self.commit_text()
-        return QPixmap.fromImage(self.image)
+        image=self.image.copy()
+        with QPainter(image) as painter:
+            painter.scale(image.width()/self.width(),image.height()/self.height())
+            self.paint_number_marks(painter)
+            self.paint_text_marks(painter)
+        return QPixmap.fromImage(image)
 
     def text_font(self,scale=1):
         font=QFont(self.font_family)
@@ -317,13 +456,36 @@ class Canvas(QWidget):
         font.setItalic(self.text_italic)
         return font
 
-    def update_text_editor_style(self):
-        if self.text_editor is None:return
+    def text_style(self):
+        return self.font_size,self.font_family,self.text_bold,self.text_italic,QColor(self.color)
+
+    def update_text_editor_style(self, apply_format=True):
+        if self.text_editor is None:
+            if apply_format and self.mode=='文字' and self.selected_text is not None:
+                mark=self.text_marks[self.selected_text]
+                style=self.text_style()
+                if mark.style==style:return
+                from PySide6.QtGui import QTextCursor,QTextCharFormat
+                document=mark.create_document()
+                cursor=QTextCursor(document)
+                cursor.select(QTextCursor.SelectionType.Document)
+                fmt=QTextCharFormat()
+                fmt.setFont(self.text_font(self.width()/self.image.width()))
+                fmt.setForeground(self.color)
+                cursor.mergeCharFormat(fmt)
+                updated=TextMark.render(document,mark.position,style,mark.scale)
+                self.snapshot()
+                self.text_marks[self.selected_text]=self.fit_text_mark(updated)
+                self.update()
+            return
         scale=self.width()/self.image.width()
         from PySide6.QtGui import QTextCursor,QTextCharFormat
         editor=self.text_editor
         font=self.text_font(scale)
+        c=self.color
+        editor.setStyleSheet(f'QTextEdit {{background:transparent;color:rgba({c.red()},{c.green()},{c.blue()},{c.alpha()});font-size:{font.pointSizeF()}pt;border:1px dashed #3286ff;padding:0;selection-background-color:#b5d7ff;}}')
         editor.setFont(font)
+        editor.document().setDefaultFont(font)
         cursor=editor.textCursor()
         saved=(cursor.anchor(),cursor.position())
         if not cursor.hasSelection() and editor.format_selection:
@@ -334,94 +496,290 @@ class Canvas(QWidget):
         format=QTextCharFormat()
         format.setFont(font)
         format.setForeground(self.color)
-        cursor.mergeCharFormat(format)
-        editor.mergeCurrentCharFormat(format)
+        if apply_format:
+            cursor.mergeCharFormat(format)
+            editor.mergeCurrentCharFormat(format)
         restore=editor.textCursor()
         restore.setPosition(saved[0])
         restore.setPosition(saved[1],QTextCursor.MoveMode.KeepAnchor)
         editor.setTextCursor(restore)
-        c=self.color
-        self.text_editor.setStyleSheet(f'QPlainTextEdit {{background:transparent;color:rgba({c.red()},{c.green()},{c.blue()},{c.alpha()});border:1px dashed #202020;padding:3px;selection-background-color:#b5d7ff;}}')
+        if not restore.hasSelection():
+            # setHtml restores the saved runs, but leaves the insertion
+            # format at the start of the document on the UI theme font.
+            editor.setCurrentCharFormat(format)
         self.resize_text_editor()
 
     def resize_text_editor(self):
         editor=self.text_editor
-        if editor is None:return
-        lines=editor.toPlainText().splitlines() or ['输入文字…']
-        metrics=editor.fontMetrics()
-        desired=max(metrics.horizontalAdvance(line) for line in lines)+22
-        width=min(max(130,desired),self.width()-editor.x())
-        editor.setFixedWidth(width)
-        visual_lines=sum(max(1,math.ceil(metrics.horizontalAdvance(line)/max(20,width-14))) for line in lines)
-        height=min(max(metrics.lineSpacing()+16,visual_lines*metrics.lineSpacing()+16),self.height()-editor.y())
-        editor.setFixedHeight(max(28,height))
+        if editor is None or editor.laying_out:return
+        editor.laying_out=True
+        try:
+            x,y=editor.anchor.x(),editor.anchor.y()
+            document=editor.document()
+            border=editor.frameWidth()*2
+            measurement=document.clone()
+            if editor.preedit:
+                from PySide6.QtGui import QTextCursor
+                preview=QTextCursor(measurement)
+                cursor=editor.textCursor()
+                preview.setPosition(cursor.anchor())
+                preview.setPosition(cursor.position(),QTextCursor.MoveMode.KeepAnchor)
+                preview.insertText(editor.preedit,editor.currentCharFormat())
+            measurement.setTextWidth(-1)
+            natural_width=max(24,math.ceil(measurement.idealWidth())+border+4)
+            editor.setFixedWidth(min(natural_width,self.width()-x))
+            measurement.setTextWidth(max(1,editor.width()-border))
+            height=math.ceil(measurement.size().height())+border
+            if editor.composing:
+                # Size the viewport from a detached document. Keep the live
+                # composition and its cursor under Qt's input-method control.
+                editor.setFixedHeight(min(self.height(),height))
+                editor.move(x,max(0,min(y,self.height()-editor.height())))
+                return
+            document.setTextWidth(max(1,editor.width()-border))
+            height=math.ceil(document.size().height())+border
+            if height>self.height() and x:
+                x=0
+                editor.setFixedWidth(self.width())
+                document.setTextWidth(max(1,editor.width()-border))
+                height=math.ceil(document.size().height())+border
+            if height>self.height():
+                # Fit the live layout once the input event has returned. A
+                # minimum readable font avoids invalid native glyph metrics.
+                for _ in range(4):
+                    factor=min(0.9,max(0.25,self.height()/height*0.96))
+                    if not self.scale_text_document(document,factor,editor.font(),minimum=4):break
+                    height=math.ceil(document.size().height())+border
+                    if height<=self.height():break
+            editor.setFixedHeight(min(self.height(),height))
+            editor.move(x,max(0,min(y,self.height()-editor.height())))
+            editor.verticalScrollBar().setValue(0)
+            editor.horizontalScrollBar().setValue(0)
+        finally:
+            editor.laying_out=False
 
-    def begin_text(self,pos):
+    def begin_text(self,pos,index=None):
         self.commit_text()
         self.cursor_badge.hide()
         editor=InlineTextEdit(self)
         self.text_editor=editor
-        editor.textChanged.connect(self.resize_text_editor)
-        x=max(0,min(pos.x(),self.width()-80))
-        y=max(0,min(pos.y(),self.height()-40))
-        editor.setGeometry(x,y,min(360,self.width()-x),min(110,self.height()-y))
-        self.update_text_editor_style()
+        self.editing_text=index
+        self.selected_text=index
+        if index is not None:
+            pos=self.text_marks[index].position-QPoint(editor.frameWidth(),editor.frameWidth())
+        x=max(0,min(pos.x(),self.width()-min(24,self.width())))
+        y=max(0,min(pos.y(),self.height()-1))
+        editor.anchor=QPoint(x,y)
+        if index is not None:
+            mark=self.text_marks[index]
+            editor.laying_out=True
+            try:
+                editor.setHtml(mark.html)
+                style=mark.style
+                if mark.scale!=1:
+                    self.scale_text_document(editor.document(),mark.scale,mark.font)
+                    style=(max(10,min(96,round(style[0]*mark.scale))),*style[1:])
+                self.load_text_style(style)
+            finally:
+                editor.laying_out=False
+        self.update_text_editor_style(apply_format=index is None)
         editor.show()
         editor.raise_()
         editor.setFocus()
+        self.update()
+
+    def load_text_style(self,style):
+        self.font_size,self.font_family,self.text_bold,self.text_italic,self.color=style
+        self.color=QColor(self.color)
+        self.text_selected.emit(self.text_style())
 
     def cancel_text(self):
         editor=self.text_editor
         self.text_editor=None
+        self.editing_text=None
         if editor:
+            editor.layout_timer.stop()
+            editor.frame_drag=None
             editor.hide()
             editor.deleteLater()
+            self.setFocus()
+        self.update()
 
     def commit_text(self):
         editor=self.text_editor
         if editor is None:return
+        if editor.composing:
+            QApplication.inputMethod().commit()
+        editor.layout_timer.stop()
+        self.resize_text_editor()
         text=editor.toPlainText()
+        index=self.editing_text
         if text.strip():
-            from PySide6.QtGui import QTextDocument,QTextCursor,QTextCharFormat
-            self.snapshot()
-            ratio=self.image.width()/self.width()
             document=QTextDocument()
+            document.setDefaultFont(editor.document().defaultFont())
             document.setHtml(editor.document().toHtml())
-            document.setDocumentMargin(3)
-            document.setTextWidth(editor.width())
-            painter=QPainter(self.image)
-            painter.scale(ratio,ratio)
-            painter.translate(editor.x(),editor.y())
-            document.drawContents(painter)
-            painter.end()
+            document.setTextWidth(editor.document().textWidth())
+            mark=self.fit_text_mark(TextMark.render(document,editor.pos()+QPoint(editor.frameWidth(),editor.frameWidth()),self.text_style()))
+            self.snapshot()
+            if index is None:
+                index=len(self.text_marks)
+                self.text_marks.append(mark)
+            else:self.text_marks[index]=mark
+            self.selected_text=index
         self.cancel_text()
-        self.update()
+
+    def fit_text_mark(self,mark):
+        size=mark.size()
+        factor=min(1,self.width()/size.width(),self.height()/size.height())
+        if factor<1:mark=replace(mark,scale=mark.scale*factor)
+        size=mark.size()
+        point=QPoint(max(0,min(mark.position.x(),self.width()-size.width())),
+                     max(0,min(mark.position.y(),self.height()-size.height())))
+        return replace(mark,position=point)
+
+    def paint_text_marks(self,painter):
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        for index,mark in enumerate(self.text_marks):
+            if index==self.editing_text:continue
+            painter.drawImage(mark.rect(),mark.raster)
+
+    @staticmethod
+    def scale_text_document(document,scale,default_font,minimum=4):
+        from PySide6.QtGui import QTextCursor,QTextCharFormat
+        fragments=[]
+        block=document.begin()
+        while block.isValid():
+            iterator=block.begin()
+            while not iterator.atEnd():
+                fragment=iterator.fragment()
+                if fragment.isValid():
+                    size=fragment.charFormat().fontPointSize() or default_font.pointSizeF()
+                    target=max(minimum,size*scale)
+                    if abs(size-target)>0.01:
+                        fragments.append((fragment.position(),fragment.length(),target))
+                iterator+=1
+            block=block.next()
+        cursor=QTextCursor(document)
+        for position,length,size in fragments:
+            cursor.setPosition(position)
+            cursor.setPosition(position+length,QTextCursor.MoveMode.KeepAnchor)
+            fmt=QTextCharFormat()
+            fmt.setFontPointSize(size)
+            cursor.mergeCharFormat(fmt)
+        return bool(fragments)
+
+    def text_at(self,pos):
+        for index in range(len(self.text_marks)-1,-1,-1):
+            if self.text_marks[index].rect().adjusted(-3,-3,3,3).contains(pos):return index
+        return None
+
+    def text_handle(self):
+        if self.selected_text is None:return QRect()
+        end=self.text_marks[self.selected_text].rect().bottomRight()
+        point=QPoint(max(0,min(end.x()-6,self.width()-15)),max(0,min(end.y()-6,self.height()-15)))
+        return QRect(point,QSize(12,12))
+
+    def keyPressEvent(self,event):
+        if event.key()==Qt.Key.Key_Delete and self.mode=='序号' and self.delete_number():
+            event.accept()
+            return
+        if self.mode=='文字' and self.selected_text is not None:
+            if event.key()==Qt.Key.Key_F2:
+                self.edit_text(self.selected_text)
+                event.accept()
+                return
+            if event.matches(QKeySequence.StandardKey.SelectAll):
+                index=self.selected_text
+                self.begin_text(self.text_marks[index].position,index)
+                self.text_editor.selectAll()
+                return
+            if event.key()==Qt.Key.Key_Delete:
+                self.snapshot()
+                del self.text_marks[self.selected_text]
+                self.selected_text=None
+                self.update()
+                return
+        super().keyPressEvent(event)
 
     def snapshot(self):
-        self.undo_stack.append(self.image.copy())
+        self.undo_stack.append(self.annotation_state())
         if len(self.undo_stack) > 15:
             self.undo_stack.pop(0)
         self.redo_stack.clear()
 
+    def annotation_state(self):
+        return self.image.copy(),self.text_marks.copy(),self.number_marks.copy()
+
     def undo(self):
+        self.cancel_text()
+        self.text_drag=None
         if self.undo_stack:
-            self.redo_stack.append(self.image.copy())
-            self.image = self.undo_stack.pop()
+            self.redo_stack.append(self.annotation_state())
+            self.image,self.text_marks,self.number_marks = self.undo_stack.pop()
+            self.selected_text=None
+            self.selected_number=None
             self.update()
 
     def redo(self):
+        self.cancel_text()
+        self.text_drag=None
         if self.redo_stack:
-            self.undo_stack.append(self.image.copy())
-            self.image = self.redo_stack.pop()
+            self.undo_stack.append(self.annotation_state())
+            self.image,self.text_marks,self.number_marks = self.redo_stack.pop()
+            self.selected_text=None
+            self.selected_number=None
             self.update()
 
     def paintEvent(self, event):
-        p = QPainter(self)
-        p.scale(self.width()/self.image.width(), self.height()/self.image.height())
-        p.drawImage(0, 0, self.image)
-        if self.start is not None:
-            self.draw(p)
-        p.end()
+        with QPainter(self) as painter:
+            painter.save()
+            try:
+                painter.scale(self.width()/self.image.width(), self.height()/self.image.height())
+                painter.drawImage(0,0,self.image)
+                if self.start is not None:self.draw(painter)
+            finally:
+                painter.restore()
+            self.paint_number_marks(painter)
+            self.paint_text_marks(painter)
+            if self.mode=='序号' and self.selected_number is not None:
+                mark=self.number_marks[self.selected_number]
+                painter.setPen(QPen(QColor('#3286ff'),1.5,Qt.PenStyle.DashLine))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                radius=mark.radius()+3
+                painter.drawEllipse(mark.position,radius,radius)
+            if self.mode=='文字' and self.selected_text is not None and self.text_editor is None:
+                painter.setPen(QPen(QColor('#3286ff'),1,Qt.PenStyle.DashLine))
+                painter.drawRect(self.text_marks[self.selected_text].rect())
+                painter.fillRect(self.text_handle().adjusted(3,3,-3,-3),QColor('#3286ff'))
+
+    def paint_number_marks(self,painter):
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        for mark in self.number_marks:
+            radius=mark.radius()
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(mark.color)
+            painter.drawEllipse(mark.position,radius,radius)
+            painter.setPen(QColor('white'))
+            painter.setFont(QFont('Arial',mark.font_size,QFont.Weight.Bold))
+            rect=QRect(mark.position-QPoint(radius,radius),QSize(radius*2,radius*2))
+            painter.drawText(rect,Qt.AlignmentFlag.AlignCenter,str(mark.number))
+        painter.restore()
+
+    def number_at(self,point):
+        for index in range(len(self.number_marks)-1,-1,-1):
+            mark=self.number_marks[index]
+            delta=point-mark.position
+            if delta.x()**2+delta.y()**2<=(mark.radius()+2)**2:return index
+        return None
+
+    def delete_number(self):
+        if self.selected_number is None:return False
+        self.snapshot()
+        del self.number_marks[self.selected_number]
+        self.selected_number=None
+        self.update()
+        return True
 
     def draw(self, p):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -455,30 +813,59 @@ class Canvas(QWidget):
         pos = self.image_pos(e.position().toPoint())
         if self.mode!='文字':self.commit_text()
         if self.mode=='序号':
-            self.snapshot()
-            p=QPainter(self.image)
-            p.setRenderHint(QPainter.RenderHint.Antialiasing)
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(self.color)
-            radius=max(10,self.font_size*.8)
-            p.drawEllipse(pos,radius,radius)
-            p.setPen(QColor('white'))
-            p.setFont(QFont('Arial',self.font_size,QFont.Weight.Bold))
-            radius=round(radius)
-            p.drawText(QRect(pos-QPoint(radius,radius),QSize(radius*2,radius*2)),Qt.AlignmentFlag.AlignCenter,str(self.counter))
-            p.end()
-            self.counter+=1
+            point=e.position().toPoint()
+            self.selected_number=self.number_at(point)
+            if self.selected_number is None:
+                used={mark.number for mark in self.number_marks}
+                number=next(value for value in range(1,len(used)+2) if value not in used)
+                self.snapshot()
+                self.number_marks.append(NumberMark(number,point,QColor(self.color),self.font_size))
+                self.selected_number=len(self.number_marks)-1
+            self.setFocus()
             self.update()
             return
         if self.mode == '文字':
-            self.begin_text(e.position().toPoint())
+            point=e.position().toPoint()
+            was_editing=self.text_editor is not None
+            if was_editing:
+                self.commit_text()
+            resize=self.text_handle().contains(point)
+            index=self.selected_text if resize else self.text_at(point)
+            if index is None:
+                if not was_editing:self.begin_text(point)
+                return
+            self.selected_text=index
+            mark=self.text_marks[index]
+            self.load_text_style(mark.style)
+            self.text_drag=(point,mark,resize)
+            self.setFocus()
+            self.update()
             return
         self.start = self.end = pos
         self.stroke = [pos]
         if self.mode=='马赛克':self.mosaic_effect=MosaicEffect(self.image)
 
     def mouseMoveEvent(self, e):
-        self.update_badge(e.position().toPoint())
+        point=e.position().toPoint()
+        if self.text_drag is not None:
+            origin,mark,resize=self.text_drag
+            delta=point-origin
+            if resize:
+                size=mark.size()
+                factor=1+(delta.x()*size.width()+delta.y()*size.height())/(size.width()**2+size.height()**2)
+                changed=replace(mark,scale=max(0.15,mark.scale*factor))
+            else:changed=replace(mark,position=mark.position+delta)
+            self.text_marks[self.selected_text]=self.fit_text_mark(changed)
+            self.cursor_badge.hide()
+            self.update()
+            return
+        if self.mode=='文字' and (self.text_handle().contains(point) or self.text_at(point) is not None):
+            if self.property('edge_hover'):return
+            self.cursor_badge.hide()
+            self.setCursor(Qt.CursorShape.SizeFDiagCursor if self.text_handle().contains(point) else Qt.CursorShape.SizeAllCursor)
+            return
+        if self.mode=='文字' and not self.property('edge_hover'):self.setCursor(Qt.CursorShape.ArrowCursor)
+        self.update_badge(point)
         if self.start is not None:
             self.end = self.image_pos(e.position().toPoint())
             self.stroke.append(self.end)
@@ -498,6 +885,16 @@ class Canvas(QWidget):
         super().leaveEvent(event)
 
     def mouseReleaseEvent(self, e):
+        if self.text_drag is not None and e.button()==Qt.MouseButton.LeftButton:
+            _,original,_=self.text_drag
+            self.text_drag=None
+            updated=self.text_marks[self.selected_text]
+            if updated!=original:
+                self.text_marks[self.selected_text]=original
+                self.snapshot()
+                self.text_marks[self.selected_text]=updated
+            self.update()
+            return
         if self.start is not None:
             self.end = self.image_pos(e.position().toPoint())
             self.stroke.append(self.end)
@@ -509,6 +906,24 @@ class Canvas(QWidget):
             self.start = self.end = None
             self.mosaic_effect=None
             self.update()
+
+    def mouseDoubleClickEvent(self,event):
+        if self.mode=='文字' and event.button()==Qt.MouseButton.LeftButton:
+            if self.edit_text_at(event.position().toPoint()):
+                event.accept()
+                return
+        super().mouseDoubleClickEvent(event)
+
+    def edit_text_at(self,point):
+        index=self.text_at(point)
+        if index is None:return False
+        return self.edit_text(index)
+
+    def edit_text(self,index):
+        if not 0<=index<len(self.text_marks):return False
+        self.text_drag=None
+        self.begin_text(self.text_marks[index].position,index)
+        return True
 
     def image_pos(self,pos):
         return QPoint(round(pos.x()*self.image.width()/self.width()),round(pos.y()*self.image.height()/self.height()))
@@ -631,6 +1046,7 @@ class Editor(QMainWindow):
         second.addAction(lucide('scan-letter-a'),'文字识别',self.text)
         second.addAction(lucide('languages'),'翻译',self.translation)
         self.options=AnnotationOptions(self)
+        self.canvas.text_selected.connect(self.options.load_text_style)
         options_bar=QToolBar()
         self.addToolBarBreak()
         self.addToolBar(options_bar)
@@ -646,7 +1062,10 @@ class Editor(QMainWindow):
         self.resize(1100,760)
 
     def select(self, mode):
-        if self.canvas.mode=='文字' and mode!='文字':self.canvas.commit_text()
+        if self.canvas.mode=='文字' and mode!='文字':
+            self.canvas.commit_text()
+            self.canvas.selected_text=None
+            self.canvas.text_drag=None
         self.canvas.mode = mode
         if hasattr(self,'options'):self.options.set_mode(mode)
         for act in self.tools:
@@ -696,22 +1115,21 @@ class BasicOverlay(QWidget):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
     def paintEvent(self, e):
-        p = QPainter(self)
-        p.drawPixmap(self.rect(),self.frozen)
-        p.fillRect(self.rect(), QColor(0,0,0,110))
-        if self.start is not None:
-            r = QRect(self.start,self.end).normalized().intersected(self.rect())
-            p.save()
-            p.setClipRect(r)
+        with QPainter(self) as p:
             p.drawPixmap(self.rect(),self.frozen)
-            p.restore()
-            p.setPen(QPen(QColor('#55dfbd'),2))
-            p.drawRect(r)
-            p.drawText(r.topLeft()+QPoint(5,-8),f'{r.width()} × {r.height()}')
-        else:
-            p.setPen(QColor('white'))
-            p.drawText(28,42,'轻截  ·  拖动框选截图区域，松开进入编辑；Esc 取消')
-        p.end()
+            p.fillRect(self.rect(), QColor(0,0,0,110))
+            if self.start is not None:
+                r = QRect(self.start,self.end).normalized().intersected(self.rect())
+                p.save()
+                p.setClipRect(r)
+                p.drawPixmap(self.rect(),self.frozen)
+                p.restore()
+                p.setPen(QPen(QColor('#55dfbd'),2))
+                p.drawRect(r)
+                p.drawText(r.topLeft()+QPoint(5,-8),f'{r.width()} × {r.height()}')
+            else:
+                p.setPen(QColor('white'))
+                p.drawText(28,42,'轻截  ·  拖动框选截图区域，松开进入编辑；Esc 取消')
 
     def mousePressEvent(self, e):
         if e.button()==Qt.MouseButton.RightButton:
@@ -867,7 +1285,7 @@ class Overlay(BasicOverlay):
         if active:self.cursor_pos=cursor_pos-self.geometry().topLeft()
         self.update_window_preview()
         self.position_hints()
-        if changed or active:self.update()
+        if changed or (active and self.rect_selected is None):self.update()
 
     def refresh_detection_hint(self):
         self.detection_hint_key.setText(keys().get(8,'F8') or '未设置')
@@ -941,51 +1359,50 @@ class Overlay(BasicOverlay):
         if hasattr(self,'border'):self.border.setGeometry(self.rect())
 
     def paintEvent(self,event):
-        p=QPainter(self)
-        p.drawPixmap(self.rect(),self.frozen)
-        p.fillRect(self.rect(),QColor(0,0,0,105))
-        r=self.rect_selected
-        if r is None and self.start is not None and (self.manual_drag or self.hover_target is None):
-            r=QRect(self.start,self.end).normalized().intersected(self.rect())
-        if r is None and self.hover_target is not None:r=self.target_rect(self.hover_target)
-        if r:
-            if not self.canvas or self.canvas.isHidden():
-                p.save()
-                p.setClipRect(r)
-                p.drawPixmap(self.rect(),self.frozen)
-                p.restore()
-            p.setPen(QPen(QColor('#3286ff'),BORDER_WIDTH))
-            p.drawRect(r)
-            if self.mode=='选区' and self.rect_selected is not None:
-                p.setBrush(QColor('white'))
-                for pt in self.handles(r):p.drawEllipse(pt,4,4)
-            if flag('capture/guides',False):
-                p.setPen(QPen(QColor('#7bb4ff'),1,Qt.PenStyle.DashLine))
-                p.drawLine(r.center().x(),r.top(),r.center().x(),r.bottom())
-                p.drawLine(r.left(),r.center().y(),r.right(),r.center().y())
-            if flag('capture/info',True):
-                sx=self.frozen.width()/self.width()
-                sy=self.frozen.height()/self.height()
-                label=f'{r.x()},{r.y()}  {round(r.width()*sx)} × {round(r.height()*sy)} px'
-                box=QRect(r.left(),max(0,r.top()-29),max(170,len(label)*7),24)
-                p.setPen(QPen(QColor('#dadde3'),1))
-                p.setBrush(QColor(40,40,40,210))
-                p.drawRoundedRect(box,12,12)
+        with QPainter(self) as p:
+            p.drawPixmap(self.rect(),self.frozen)
+            p.fillRect(self.rect(),QColor(0,0,0,105))
+            r=self.rect_selected
+            if r is None and self.start is not None and (self.manual_drag or self.hover_target is None):
+                r=QRect(self.start,self.end).normalized().intersected(self.rect())
+            if r is None and self.hover_target is not None:r=self.target_rect(self.hover_target)
+            if r:
+                if not self.canvas or self.canvas.isHidden():
+                    p.save()
+                    p.setClipRect(r)
+                    p.drawPixmap(self.rect(),self.frozen)
+                    p.restore()
+                p.setPen(QPen(QColor('#3286ff'),BORDER_WIDTH))
+                p.drawRect(r)
+                if self.mode=='选区' and self.rect_selected is not None:
+                    p.setBrush(QColor('white'))
+                    for pt in self.handles(r):p.drawEllipse(pt,4,4)
+                if flag('capture/guides',False):
+                    p.setPen(QPen(QColor('#7bb4ff'),1,Qt.PenStyle.DashLine))
+                    p.drawLine(r.center().x(),r.top(),r.center().x(),r.bottom())
+                    p.drawLine(r.left(),r.center().y(),r.right(),r.center().y())
+                if flag('capture/info',True):
+                    sx=self.frozen.width()/self.width()
+                    sy=self.frozen.height()/self.height()
+                    label=f'{r.x()},{r.y()}  {round(r.width()*sx)} × {round(r.height()*sy)} px'
+                    box=QRect(r.left(),max(0,r.top()-29),max(170,len(label)*7),24)
+                    p.setPen(QPen(QColor('#dadde3'),1))
+                    p.setBrush(QColor(40,40,40,210))
+                    p.drawRoundedRect(box,12,12)
+                    p.setPen(QColor('white'))
+                    p.drawText(box,Qt.AlignmentFlag.AlignCenter,label)
+            elif self.active_screen and flag('capture/magnifier',True):
+                sx,sy=self.frozen.width()/self.width(),self.frozen.height()/self.height()
+                pos=self.cursor_pos
+                sample=self.frozen.copy(QRect(round(pos.x()*sx)-6,round(pos.y()*sy)-6,13,13))
+                box=QRect(min(pos.x()+24,self.width()-170),min(pos.y()+24,self.height()-195),156,156)
+                p.drawPixmap(box,sample)
+                p.setPen(QPen(QColor('#3286f5'),1))
+                p.drawRect(box)
+                p.drawRect(QRect(box.center()-QPoint(6,6),QSize(12,12)))
+                p.fillRect(QRect(box.left(),box.bottom(),156,28),QColor(0,0,0,190))
                 p.setPen(QColor('white'))
-                p.drawText(box,Qt.AlignmentFlag.AlignCenter,label)
-        elif self.active_screen and flag('capture/magnifier',True):
-            sx,sy=self.frozen.width()/self.width(),self.frozen.height()/self.height()
-            pos=self.cursor_pos
-            sample=self.frozen.copy(QRect(round(pos.x()*sx)-6,round(pos.y()*sy)-6,13,13))
-            box=QRect(min(pos.x()+24,self.width()-170),min(pos.y()+24,self.height()-195),156,156)
-            p.drawPixmap(box,sample)
-            p.setPen(QPen(QColor('#3286f5'),1))
-            p.drawRect(box)
-            p.drawRect(QRect(box.center()-QPoint(6,6),QSize(12,12)))
-            p.fillRect(QRect(box.left(),box.bottom(),156,28),QColor(0,0,0,190))
-            p.setPen(QColor('white'))
-            p.drawText(box.left()+8,box.bottom()+19,f'({pos.x()}, {pos.y()})')
-        p.end()
+                p.drawText(box.left()+8,box.bottom()+19,f'({pos.x()}, {pos.y()})')
 
     def handles(self,r):
         return [r.topLeft(),QPoint(r.center().x(),r.top()),r.topRight(),QPoint(r.right(),r.center().y()),r.bottomRight(),QPoint(r.center().x(),r.bottom()),r.bottomLeft(),QPoint(r.left(),r.center().y())]
@@ -996,17 +1413,31 @@ class Overlay(BasicOverlay):
         pix.setDevicePixelRatio(1)
         return pix
 
-    def set_selection(self,r,window_target=None):
+    def set_selection(self,r,window_target=None,keep_text=False):
         r=r.normalized().intersected(self.rect())
         if r.width()<3 or r.height()<3:return
         self.rect_selected=r
         self.hover_target=None
+        marks=[]
+        numbers=[]
         if self.canvas:
+            if keep_text:
+                self.canvas.commit_text()
+                offset=self.canvas.pos()-r.topLeft()
+                marks=[replace(mark,position=mark.position+offset) for mark in self.canvas.text_marks]
+                for mark in self.canvas.number_marks:
+                    point=mark.position+offset
+                    point=QPoint(max(0,min(point.x(),r.width()-1)),max(0,min(point.y(),r.height()-1)))
+                    numbers.append(replace(mark,position=point))
+            self.canvas.hide()
             self.canvas.deleteLater()
         self.canvas=Canvas(self.crop_target(window_target) if window_target is not None else self.crop(r))
+        self.canvas.text_selected.connect(self.options.load_text_style)
         self.canvas.setParent(self)
         self.canvas.installEventFilter(self)
         self.canvas.setFixedSize(r.size())
+        self.canvas.text_marks=[self.canvas.fit_text_mark(mark) for mark in marks]
+        self.canvas.number_marks=numbers
         self.canvas.move(r.topLeft())
         self.canvas.show()
         if self.controller is not None:self.controller.current_capture=self
@@ -1038,7 +1469,10 @@ class Overlay(BasicOverlay):
         self.position_hints()
 
     def tool(self,mode):
-        if self.canvas and self.canvas.mode=='文字' and mode!='文字':self.canvas.commit_text()
+        if self.canvas and self.canvas.mode=='文字' and mode!='文字':
+            self.canvas.commit_text()
+            self.canvas.selected_text=None
+            self.canvas.text_drag=None
         self.mode=mode
         for modes,svg in [(['矩形','圆角矩形','椭圆'],'square'),(['画笔','荧光笔'],'pencil')]:
             if mode in modes:
@@ -1092,7 +1526,7 @@ class Overlay(BasicOverlay):
         if self.canvas and self.canvas.isHidden():
             mode=self.mode
             r=self.rect_selected
-            self.set_selection(r)
+            self.set_selection(r,keep_text=True)
             self.tool(mode)
         elif self.canvas:self.layout_bars()
 
@@ -1207,8 +1641,11 @@ class Overlay(BasicOverlay):
         if self.rect_selected and self.drag_kind is not None:
             r=self.rect_selected
             previous_mode=self.mode
-            self.set_selection(r)
-            self.tool(previous_mode)
+            if r==self.drag_rect:
+                self.canvas.show()
+            else:
+                self.set_selection(r,keep_text=True)
+                self.tool(previous_mode)
             self.drag_kind=None
             self.layout_bars()
             self.update_pointer(e.position().toPoint())
@@ -1223,6 +1660,15 @@ class Overlay(BasicOverlay):
 
     def mouseDoubleClickEvent(self,e):
         if self.canvas:
+            if self.mode=='选区' and e.button()==Qt.MouseButton.LeftButton:
+                point=self.canvas.mapFrom(self,e.position().toPoint())
+                if self.canvas.text_at(point) is not None:
+                    self.drag_kind=None
+                    self.canvas.show()
+                    self.tool('文字')
+                    self.canvas.edit_text_at(point)
+                    e.accept()
+                    return
             action=str(preferences().value('capture/double','复制'))
             {'复制':self.finish,'贴图':self.pin,'保存':self.save}[action]()
 
@@ -1249,9 +1695,14 @@ class Overlay(BasicOverlay):
 
     def clear_marks(self):
         if self.canvas:
+            self.canvas.cancel_text()
             self.canvas.snapshot()
+            self.canvas.text_marks.clear()
+            self.canvas.number_marks.clear()
+            self.canvas.selected_number=None
+            self.canvas.selected_text=None
+            self.canvas.text_drag=None
             self.canvas.image=self.crop(self.rect_selected).toImage()
-            self.canvas.counter=1
             self.canvas.update()
 
     def pin(self):
@@ -1331,7 +1782,8 @@ class Overlay(BasicOverlay):
         elif ctrl and key==Qt.Key.Key_S:self.save(True)
         elif shift and key==Qt.Key.Key_C:self.ocr()
         elif self.canvas:
-            if key==Qt.Key.Key_L and not ctrl:self.session('scroll')
+            if key==Qt.Key.Key_Delete and self.mode=='序号':self.canvas.delete_number()
+            elif key==Qt.Key.Key_L and not ctrl:self.session('scroll')
             elif key==Qt.Key.Key_G and not ctrl:self.session('video')
             elif ctrl and shift and key==Qt.Key.Key_Z:self.clear_marks()
             elif ctrl and key==Qt.Key.Key_Z:self.canvas.undo()
@@ -1342,7 +1794,7 @@ class Overlay(BasicOverlay):
                 r=QRect(self.rect_selected)
                 if shift:r.setBottomRight(r.bottomRight()+QPoint(dx,dy))
                 else:r.translate(dx,dy)
-                self.set_selection(r)
+                self.set_selection(r,keep_text=True)
             else:
                 mapping={'V':'选区','R':'矩形','O':'椭圆','A':'箭头','P':'画笔','H':'荧光笔','M':'马赛克','T':'文字','N':'序号'}
                 if e.text().upper() in mapping:self.tool(mapping[e.text().upper()])
@@ -1593,11 +2045,13 @@ class Home(QMainWindow):
 
     def sync_capture_screen(self,cursor_pos=None):
         pos=QCursor.pos() if cursor_pos is None else cursor_pos
+        editing=any(item.canvas is not None and item.canvas.text_editor is not None for item in self.overlays)
         for overlay in self.overlays:
             active=overlay.geometry().contains(pos)
             was_active=overlay.active_screen
             overlay.set_capture_active(active,pos)
-            if active and (not was_active or not overlay.isActiveWindow()) and QApplication.activeModalWidget() is None and QApplication.activePopupWidget() is None:
+            # An inline editor owns its focus until the user commits or cancels it.
+            if active and not editing and (not was_active or not overlay.isActiveWindow()) and QApplication.activeModalWidget() is None and QApplication.activePopupWidget() is None:
                 overlay.activateWindow()
 
     def clear_overlays(self):
@@ -1707,6 +2161,7 @@ def main():
     app.setQuitOnLastWindowClosed(False)
     if '--self-test' in sys.argv:
         import json
+        from verify_text_ui import verify_text_workflow,verify_number_workflow
         result={}
         try:
             pix=QPixmap(650,140)
@@ -1722,6 +2177,12 @@ def main():
             result['editor']=not editor.canvas.pixmap().isNull()
             result['screen_capture']=not app.primaryScreen().grabWindow(0).isNull()
             assert result['editor'] and result['screen_capture']
+            result['text_workflow_cycles']=verify_text_workflow(Overlay,100 if '--stress-text' in sys.argv else 20)
+            verify_number_workflow(Overlay)
+            result['number_delete_and_reuse']=True
+            if '--native-text-list' in sys.argv:
+                from verify_text_ui import verify_native_text_list
+                result['native_text_list_screens']=verify_native_text_list(Overlay)
             result['ok']=True
         except Exception as exc:
             result['ok']=False

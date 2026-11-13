@@ -77,17 +77,16 @@ class TranslationPopup(QWidget):
         self.layout().activate()
 
     def paintEvent(self,event):
-        p=QPainter(self)
-        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
-        p.fillRect(self.rect(),Qt.GlobalColor.transparent)
-        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setPen(Qt.PenStyle.NoPen)
-        base=self.card.geometry().translated(0,3)
-        for spread in range(12,0,-1):
-            p.setBrush(QColor(0,0,0,2 if spread>6 else 4))
-            p.drawRoundedRect(base.adjusted(-spread,-spread,spread,spread),5+spread,5+spread)
-        p.end()
+        with QPainter(self) as p:
+            p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+            p.fillRect(self.rect(),Qt.GlobalColor.transparent)
+            p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            p.setPen(Qt.PenStyle.NoPen)
+            base=self.card.geometry().translated(0,3)
+            for spread in range(12,0,-1):
+                p.setBrush(QColor(0,0,0,2 if spread>6 else 4))
+                p.drawRoundedRect(base.adjusted(-spread,-spread,spread,spread),5+spread,5+spread)
 
     def start(self):
         self.show()

@@ -1,8 +1,8 @@
 import math
-from PySide6.QtCore import Qt,QPoint,QPointF,QRect,QSize,Signal
+from PySide6.QtCore import Qt,QPoint,QPointF,QRect,QSize,Signal,QEvent
 from PySide6.QtGui import QPainter,QPen,QBrush,QColor,QPolygonF,QPixmap,QIcon,QCursor,QFont
-from PySide6.QtWidgets import (QFrame,QWidget,QVBoxLayout,QHBoxLayout,QLabel,QSlider,
-    QToolButton,QMenu,QColorDialog,QPushButton,QWidgetAction,QFontComboBox,QComboBox)
+from PySide6.QtWidgets import (QApplication,QFrame,QWidget,QVBoxLayout,QHBoxLayout,QLabel,QSlider,
+    QToolButton,QMenu,QColorDialog,QPushButton,QWidgetAction,QFontComboBox,QComboBox,QListWidget)
 from ui_icons import lucide
 from theme import ThemedFontComboBox
 
@@ -158,15 +158,14 @@ class SelectionBorder(QWidget):
     def paintEvent(self,event):
         r=self.owner.rect_selected
         if r is None:return
-        p=QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(QPen(QColor('#3286ff'),BORDER_WIDTH))
-        p.drawRect(r)
-        p.setPen(QPen(QColor('white'),1.5))
-        p.setBrush(QColor('#3286ff'))
-        for pt in self.owner.handles(r):p.drawEllipse(pt,4.5,4.5)
-        p.end()
+        with QPainter(self) as p:
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(QColor('#3286ff'),BORDER_WIDTH))
+            p.drawRect(r)
+            p.setPen(QPen(QColor('white'),1.5))
+            p.setBrush(QColor('#3286ff'))
+            for pt in self.owner.handles(r):p.drawEllipse(pt,4.5,4.5)
 
 
 class AnnotationOptions(QFrame):
@@ -215,20 +214,40 @@ class AnnotationOptions(QFrame):
         row.addWidget(self.fill_button)
         self.width_widget=self.slider(row,'粗细',1,32,self.line_width,self.set_width)
         self.font_widget=self.slider(row,'字号',10,96,self.font_size,lambda v:self.set_value('font_size',v))
+        self.delete_number_button=QToolButton()
+        self.delete_number_button.setText('删除序号')
+        self.delete_number_button.setToolTip('点击序号选中后删除，也可按 Delete')
+        self.delete_number_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.delete_number_button.clicked.connect(self.delete_number)
+        row.addWidget(self.delete_number_button)
         self.font_controls=QWidget()
         fonts=QHBoxLayout(self.font_controls)
         fonts.setContentsMargins(0,0,0,0)
+        self.edit_text_button=QToolButton()
+        self.edit_text_button.setText('编辑文字 ▾')
+        self.edit_text_button.setToolTip('从已添加的文字中选择一条进行修改')
+        self.text_list=QListWidget(owner)
+        self.text_list.setStyleSheet('QListWidget {background:white;border:1px solid #cbd5e1;border-radius:6px;padding:4px;color:#243449;} QListWidget::item {padding:7px;} QListWidget::item:hover,QListWidget::item:selected {background:#e6f0ff;color:#172b4d;}')
+        self.text_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.text_list.setCursor(Qt.CursorShape.ArrowCursor)
+        self.text_list.itemClicked.connect(self.open_text_item)
+        self.text_list.itemActivated.connect(self.open_text_item)
+        self.text_list.hide()
+        self.edit_text_button.clicked.connect(self.toggle_text_list)
+        fonts.addWidget(self.edit_text_button)
         self.font_picker=ThemedFontComboBox()
         self.font_picker.setFixedWidth(145)
         self.font_picker.setCurrentFont(QFont(self.font_family))
         self.font_picker.currentFontChanged.connect(lambda font:self.set_value('font_family',font.family()))
         fonts.addWidget(self.font_picker)
+        self.text_style_buttons={}
         for label,name in [('B','text_bold'),('I','text_italic')]:
             button=QToolButton()
             button.setText(label)
             button.setCheckable(True)
             button.setToolTip('粗体' if label=='B' else '斜体')
             button.toggled.connect(lambda on,n=name:self.set_value(n,on))
+            self.text_style_buttons[name]=button
             fonts.addWidget(button)
         row.addWidget(self.font_controls)
         self.mosaic_widget=self.slider(row,'颗粒',4,40,self.block_size,lambda v:self.set_value('block_size',v))
@@ -339,6 +358,75 @@ class AnnotationOptions(QFrame):
             selected=QColor(color)==self.color
             button.setStyleSheet(f'background:{color};border:{2 if selected else 1}px solid {"#3286ff" if selected else "#abb1ba"};border-radius:6px;')
 
+    def toggle_text_list(self):
+        if self.text_list.isVisible():
+            self.close_text_list()
+            return
+        self.text_list.clear()
+        canvas=self.owner.canvas
+        if canvas is not None:
+            canvas.commit_text()
+            for index,mark in enumerate(canvas.text_marks):
+                preview=' '.join(mark.text.split())
+                label=preview[:28]+('…' if len(preview)>28 else '')
+                self.text_list.addItem(f'{index+1}. {label}')
+        if not self.text_list.count():
+            self.text_list.addItem('暂无已添加的文字')
+            self.text_list.item(0).setFlags(Qt.ItemFlag.NoItemFlags)
+        self.text_list_canvas=canvas
+        button=self.edit_text_button
+        anchor=QRect(button.mapTo(self.owner,QPoint()),button.size())
+        bounds=self.owner.rect().adjusted(4,4,-4,-4)
+        width=min(300,bounds.width())
+        height=min(220,bounds.height(),self.text_list.sizeHintForRow(0)*self.text_list.count()+12)
+        x=max(bounds.left(),min(anchor.left(),bounds.right()-width+1))
+        y=anchor.bottom()+5
+        if y+height>bounds.bottom()+1:y=max(bounds.top(),anchor.top()-height-4)
+        self.text_list.setGeometry(x,y,width,height)
+        self.text_list.show()
+        self.text_list.raise_()
+        self.text_list.setFocus()
+        QApplication.instance().installEventFilter(self)
+
+    def close_text_list(self):
+        QApplication.instance().removeEventFilter(self)
+        self.text_list.hide()
+        self.text_list_canvas=None
+
+    def open_text_item(self,item):
+        canvas=self.text_list_canvas
+        index=self.text_list.row(item)
+        self.close_text_list()
+        if canvas is not None and self.owner.canvas is canvas and canvas.mode=='文字':
+            canvas.edit_text(index)
+
+    def eventFilter(self,watched,event):
+        if self.text_list.isVisible():
+            if event.type()==QEvent.Type.KeyPress and event.key()==Qt.Key.Key_Escape:
+                self.close_text_list()
+                return True
+            if event.type()==QEvent.Type.MouseButtonPress and isinstance(watched,QWidget):
+                inside=watched is self.text_list or isinstance(watched,QWidget) and self.text_list.isAncestorOf(watched)
+                if not inside and watched is not self.edit_text_button:self.close_text_list()
+        return super().eventFilter(watched,event)
+
+    def load_text_style(self,style):
+        from PySide6.QtCore import QSignalBlocker
+        self.font_size,self.font_family,self.text_bold,self.text_italic,color=style
+        self.color=QColor(color)
+        self.opacity=self.color.alpha()
+        self.color.setAlpha(255)
+        for widget,value in [(self.font_widget,self.font_size),(self.opacity_widget,round(self.opacity*100/255))]:
+            with QSignalBlocker(widget.control):
+                widget.control.setValue(value)
+            widget.number.setText(str(value))
+        with QSignalBlocker(self.font_picker):
+            self.font_picker.setCurrentFont(QFont(self.font_family))
+        for name,button in self.text_style_buttons.items():
+            with QSignalBlocker(button):
+                button.setChecked(getattr(self,name))
+        self.refresh_swatches()
+
     def apply(self):
         c=self.owner.canvas
         if c is None:return
@@ -360,6 +448,7 @@ class AnnotationOptions(QFrame):
         c.update()
 
     def set_mode(self,mode):
+        self.close_text_list()
         width_mode='arrow' if mode=='箭头' else 'line'
         self.width_mode=width_mode
         self.set_width(self.widths[width_mode])
@@ -375,11 +464,17 @@ class AnnotationOptions(QFrame):
         self.dash_button.setVisible(mode in ['箭头','矩形','圆角矩形','椭圆'])
         self.fill_button.setVisible(mode in ['矩形','圆角矩形','椭圆'])
         self.font_widget.setVisible(mode in ['文字','序号'])
+        self.delete_number_button.setVisible(mode=='序号')
         self.font_controls.setVisible(mode=='文字')
         self.mosaic_widget.setVisible(mode=='马赛克')
         self.mosaic_choice.setVisible(mode=='马赛克')
         self.mosaic_brush_widget.setVisible(mode=='马赛克' and self.mosaic_style=='画笔涂抹')
-        self.width_widget.setVisible(mode!='马赛克')
+        self.width_widget.setVisible(mode not in ['马赛克','文字'])
         self.opacity_widget.setVisible(mode!='马赛克')
         self.colors_widget.setVisible(mode!='马赛克')
         self.apply()
+
+    def delete_number(self):
+        canvas=self.owner.canvas
+        if canvas is not None and canvas.mode=='序号':
+            canvas.delete_number()

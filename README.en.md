@@ -20,6 +20,8 @@ Press **Ctrl+Shift+1** to capture; **Enter / Ctrl+C** copies and closes; **L** s
 
 **Ctrl+Shift+4** starts delayed capture by default. Set the delay in Configuration → Capture and customize its hotkey under Hotkeys/Actions. Existing saved bindings are preserved. Start the countdown before opening the menu or popup; pressing the same hotkey again cancels it.
 
+Text annotations can be reopened from the text toolbar. Select a numbered marker and press Delete or use the toolbar button. New markers reuse the lowest missing number. Import and export settings under Configuration → System.
+
 ## Install
 
 Download the ZIP from [Releases](https://github.com/ZiP1824/LightSnip/releases/latest), extract the entire `LightSnip` directory and run `LightSnip.exe`. Keep `_internal` and `ThirdPartyLicenses` next to the executable. Python is not required for the portable build.

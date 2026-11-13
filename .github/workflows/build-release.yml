@@ -44,7 +44,7 @@ jobs:
           $test = Start-Process -WindowStyle Hidden -FilePath ".\releases\v$version\LightSnip\LightSnip.exe" -ArgumentList '--self-test','package-self-test.json' -Wait -PassThru
           if ($test.ExitCode -ne 0) { throw 'Packaged self-test failed' }
           $report = Get-Content package-self-test.json -Raw | ConvertFrom-Json
-          if (-not $report.ok) { throw 'Packaged self-test reported failure' }
+          if (-not $report.ok -or -not $report.number_delete_and_reuse) { throw 'Packaged self-test reported failure' }
       - name: Zip and publish release
         shell: pwsh
         env:

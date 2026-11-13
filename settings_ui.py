@@ -1,7 +1,7 @@
 import json
 import startup
 from pathlib import Path
-from PySide6.QtCore import Qt, QSettings,QSize
+from PySide6.QtCore import Qt, QSettings,QSize,QSaveFile,QIODevice
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (QDialog,QWidget,QVBoxLayout,QHBoxLayout,QFormLayout,
     QLabel,QPushButton,QListWidget,QStackedWidget,QScrollArea,QFrame,QKeySequenceEdit,
@@ -158,6 +158,17 @@ class SettingsWindow(QDialog):
         self.checkbox(l,'启动后显示配置窗口','system/show_settings',True)
         self.checkbox(l,'关闭配置窗口后驻留托盘','system/tray',True)
         l.addWidget(QLabel('托盘左键双击：开始截图；右键：动作菜单与配置。'))
+        row=QHBoxLayout()
+        for label,action in [('导入配置',self.import_config),('导出配置',self.export_config)]:
+            button=QPushButton(label)
+            button.clicked.connect(action)
+            row.addWidget(button)
+        row.addStretch()
+        l.addLayout(row)
+        note=QLabel('导出已应用的设置。导入后可检查快捷键和保存路径，再点击应用。')
+        note.setWordWrap(True)
+        note.setObjectName('muted')
+        l.addWidget(note)
         l.addStretch()
         return f
 
@@ -273,7 +284,7 @@ class SettingsWindow(QDialog):
 
     def about_page(self):
         f,l=self.card()
-        l.addWidget(QLabel('轻截 LightSnip 0.30'))
+        l.addWidget(QLabel('轻截 LightSnip 0.40'))
         developer=QLabel('开发者：ZiP1824')
         developer.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         l.addWidget(developer)
@@ -281,6 +292,13 @@ class SettingsWindow(QDialog):
         email.setOpenExternalLinks(True)
         email.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
         l.addWidget(email)
+        for title,url in [('GitHub 仓库','https://github.com/ZiP1824/LightSnip'),
+                          ('官方网站','https://zip1824.github.io/LightSnip/')]:
+            link=QLabel(f'{title}　<a href="{url}">{url}</a>')
+            link.setOpenExternalLinks(True)
+            link.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+            link.setWordWrap(True)
+            l.addWidget(link)
         label=QLabel('轻巧易用的截图与翻译工具。\n截图、标注、置顶贴图、本地文字识别、免费联网翻译。\n\n公式/表格识别、图片覆盖翻译暂未提供。')
         label.setWordWrap(True)
         l.addWidget(label)
@@ -296,6 +314,74 @@ class SettingsWindow(QDialog):
         for index in range(self.nav.count()):
             item=self.nav.item(index)
             item.setIcon(lucide(NAV_ICONS[item.text()],'#ffffff' if index==n else '#64748b',18))
+
+    def export_config(self):
+        from file_names import save_directory
+        path,_=QFileDialog.getSaveFileName(self,'导出轻截配置','LightSnip-settings.json','JSON 配置 (*.json)')
+        if not path:return
+        if not Path(path).suffix:path+='.json'
+        try:
+            cfg=preferences()
+            values={key:cfg.value(key,default,type=type(default)) for key,(_,default) in self.bindings.items()}
+            values['system/autostart']=startup.is_enabled()
+            values['save/path']=str(save_directory())
+            values.update({f'keys/{n}':value for n,value in keys().items()})
+            data=(json.dumps({'format':'LightSnip','version':1,'settings':values},ensure_ascii=False,indent=2)+'\n').encode('utf-8')
+            output=QSaveFile(path)
+            if not output.open(QIODevice.OpenModeFlag.WriteOnly) or output.write(data)!=len(data) or not output.commit():
+                raise OSError(output.errorString())
+        except (OSError,TypeError,ValueError) as exc:
+            self.message.setText(f'配置导出失败：{exc}')
+            return
+        self.message.setText('配置已导出。')
+
+    def import_config(self):
+        path,_=QFileDialog.getOpenFileName(self,'导入轻截配置','','JSON 配置 (*.json)')
+        if not path:return
+        try:
+            data=json.loads(Path(path).read_text(encoding='utf-8-sig'))
+            if not isinstance(data,dict) or data.get('format')!='LightSnip' or type(data.get('version')) is not int or data['version']!=1:
+                raise ValueError('请选择轻截导出的配置文件。')
+            values=data.get('settings')
+            if not isinstance(values,dict):
+                raise ValueError('配置文件缺少设置内容。')
+            changes=[]
+            for key,(widget,default) in self.bindings.items():
+                if key not in values:continue
+                value=values[key]
+                if type(value) is not type(default):
+                    raise ValueError(f'设置项 {key} 的值无效。')
+                if isinstance(widget,QCheckBox):
+                    setter=widget.setChecked
+                elif isinstance(widget,(QSpinBox,QSlider)):
+                    if not widget.minimum()<=value<=widget.maximum():
+                        raise ValueError(f'设置项 {key} 超出允许范围。')
+                    setter=widget.setValue
+                else:
+                    if widget.findText(value)<0:
+                        raise ValueError(f'设置项 {key} 的选项无效。')
+                    setter=widget.setCurrentText
+                changes.append((setter,value))
+            for n,widget in self.key_edits.items():
+                key=f'keys/{n}'
+                if key not in values:continue
+                value=values[key]
+                if not isinstance(value,str):raise ValueError('快捷键格式无效。')
+                sequence=QKeySequence.fromString(value,QKeySequence.SequenceFormat.PortableText)
+                if value and (sequence.count()!=1 or not sequence.toString(QKeySequence.SequenceFormat.PortableText)):
+                    raise ValueError(f'快捷键 {ACTION_NAMES[n]} 无效。')
+                changes.append((widget.setKeySequence,sequence))
+            if 'save/path' in values:
+                directory=values['save/path']
+                if not isinstance(directory,str) or not Path(directory).expanduser().is_absolute():
+                    raise ValueError('配置中的保存文件夹不是完整路径。')
+                changes.append((self.save_dir.setText,directory))
+        except (OSError,ValueError,RuntimeError) as exc:
+            self.message.setText(f'配置导入失败：{exc}')
+            return
+        for setter,value in changes:setter(value)
+        if 'save/path' in values:self.save_dir.setModified(True)
+        self.message.setText('配置已载入，检查后点击应用。')
 
     def defaults(self):
         if self.nav.currentRow()==5:

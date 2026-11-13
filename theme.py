@@ -80,14 +80,14 @@ class _ComboPopup(QFrame):
         layout.addWidget(self.list)
 
     def paintEvent(self,event):
-        painter=QPainter(self)
-        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
-        painter.fillRect(self.rect(),Qt.GlobalColor.transparent)
-        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(QColor('#dce3ed'))
-        painter.setBrush(QColor('white'))
-        painter.drawRoundedRect(QRectF(self.rect()).adjusted(.5,.5,-.5,-.5),8,8)
+        with QPainter(self) as painter:
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+            painter.fillRect(self.rect(),Qt.GlobalColor.transparent)
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(QColor('#dce3ed'))
+            painter.setBrush(QColor('white'))
+            painter.drawRoundedRect(QRectF(self.rect()).adjusted(.5,.5,-.5,-.5),8,8)
 
     def choose(self,index):
         if not index.isValid() or not index.flags()&Qt.ItemFlag.ItemIsEnabled:return

@@ -21,6 +21,8 @@
 | 窗口与内部元素识别 | 悬停预选窗口、控件或文字区域；滚轮切换上下层，Tab 切换整窗 |
 | 滚动长截图 / 长图拼接 | 框选后按 L，在选区内滚动；支持纵向、横向及实时预览 |
 | 本地 OCR 文字识别 | 提取中英文文字，左图右文，可编辑、复制，识别过程不联网 |
+| 文字与序号 | 已确认文字可通过「编辑文字」列表修改；点击序号选中并删除，下次添加补回空缺号码 |
+| 配置备份 | 在「配置 → 系统」导入或导出 JSON，导入后点击应用 |
 | 截图标注 | 矩形、圆角矩形、椭圆、多种箭头、画笔、荧光笔、文字与序号 |
 | 马赛克打码 | 矩形框选或画笔涂抹；笔刷粗细、颗粒大小分别调整 |
 | 桌面贴图 / 图片置顶 | 将图片钉在屏幕上，支持拖动、缩放、翻转和透明度 |
@@ -35,7 +37,7 @@
 
 ## 下载与开始使用
 
-1. 到 [Releases](https://github.com/ZiP1824/LightSnip/releases/latest) 下载 `LightSnip-v0.30-windows-x64.zip`。
+1. 到 [Releases](https://github.com/ZiP1824/LightSnip/releases/latest) 下载 `LightSnip-v0.40-windows-x64.zip`。
 2. 解压整个 `LightSnip` 文件夹，运行 `LightSnip.exe`。
 3. 默认按 **Ctrl+Shift+1** 开始截图，框选后标注、复制或保存。
 
@@ -95,7 +97,7 @@ python -m venv .venv
 .\build.ps1
 ```
 
-输出位于 `releases/v0.30/LightSnip/`。GitHub Actions 提供测试、打包与 Release 发布工作流。依赖锁定为首次公开版本验证过的版本；维护升级时应重新测试。
+输出位于 `releases/v0.40/LightSnip/`。GitHub Actions 提供测试、打包与 Release 发布工作流。依赖锁定为首次公开版本验证过的版本；维护升级时应重新测试。
 
 测试：
 

@@ -727,13 +727,261 @@ class Checks(unittest.TestCase):
         before=pix.toImage()
         c.commit_text()
         self.assertIsNone(c.text_editor)
-        self.assertNotEqual(c.image,before)
+        self.assertNotEqual(c.pixmap().toImage(),before)
         c.undo()
-        self.assertEqual(c.image,before)
+        self.assertEqual(c.pixmap().toImage(),before)
         c.begin_text(QPoint(30,30))
         c.text_editor.setPlainText('取消输入')
         QTest.keyClick(c.text_editor,Qt.Key.Key_Escape)
         self.assertIsNone(c.text_editor)
+
+    def test_text_wrap_move_resize_and_reformat_after_commit(self):
+        pix=QPixmap(480,320)
+        pix.fill(QColor('white'))
+        c=Canvas(pix)
+        c.mode='文字'
+        c.show()
+        c.begin_text(QPoint(90,280))
+        editor=c.text_editor
+        self.assertLess(editor.width(),70)
+        editor.insertPlainText('长')
+        app.processEvents()
+        one_character_width=editor.width()
+        editor.insertPlainText('文字')
+        app.processEvents()
+        self.assertGreater(editor.width(),one_character_width)
+        text='长文字需要在截图的右边界自动换行。'*3+'\n手动换行'
+        editor.setPlainText(text.split('\n')[0])
+        editor.moveCursor(editor.textCursor().MoveOperation.End)
+        QTest.keyClick(editor,Qt.Key.Key_Return)
+        editor.insertPlainText('手动换行')
+        app.processEvents()
+        self.assertEqual(editor.toPlainText(),text)
+        self.assertEqual(editor.width(),390)
+        self.assertTrue(c.rect().contains(editor.geometry()))
+        self.assertGreaterEqual(editor.viewport().height(),int(editor.document().size().height()))
+        self.assertEqual(editor.verticalScrollBarPolicy(),Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.assertEqual(editor.horizontalScrollBarPolicy(),Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        c.commit_text()
+        mark=c.text_marks[0]
+        self.assertEqual(mark.text,text)
+        # A separate short label leaves room to test moving and enlarging.
+        c.begin_text(QPoint(40,30))
+        c.text_editor.setPlainText('Editable')
+        c.commit_text()
+        mark=c.text_marks[1]
+        point=mark.rect().center()
+        QTest.mousePress(c,Qt.MouseButton.LeftButton,pos=point)
+        QTest.mouseMove(c,point+QPoint(35,20))
+        QTest.mouseRelease(c,Qt.MouseButton.LeftButton,pos=point+QPoint(35,20))
+        self.assertEqual(c.text_marks[1].position,mark.position+QPoint(35,20))
+        handle=c.text_handle().center()
+        QTest.mousePress(c,Qt.MouseButton.LeftButton,pos=handle)
+        QTest.mouseMove(c,handle+QPoint(40,30))
+        QTest.mouseRelease(c,Qt.MouseButton.LeftButton,pos=handle+QPoint(40,30))
+        self.assertGreater(c.text_marks[1].scale,1)
+        QTest.keyClick(c,Qt.Key.Key_A,Qt.KeyboardModifier.ControlModifier)
+        self.assertEqual(c.text_editor.textCursor().selectedText(),'Editable')
+        c.color=QColor('#2244bb')
+        c.text_bold=True
+        c.update_text_editor_style()
+        c.commit_text()
+        document=c.text_marks[1].create_document()
+        cursor=document.find('Editable')
+        self.assertTrue(cursor.charFormat().font().bold())
+        self.assertEqual(cursor.charFormat().foreground().color(),QColor('#2244bb'))
+        self.assertTrue(c.rect().contains(c.text_marks[1].rect()))
+        c.undo()
+        self.assertGreater(c.text_marks[1].scale,1)
+        c.redo()
+        self.assertEqual(c.text_marks[1].style[4],QColor('#2244bb'))
+        c.close()
+
+    def test_text_border_drag_and_visibility_after_switching_tools(self):
+        from app import Editor, LIGHT_STYLE
+        from PySide6.QtCore import QEvent, QPointF, QRect
+        from PySide6.QtGui import QMouseEvent
+        pix=QPixmap(520,280)
+        pix.fill(QColor('white'))
+        editor=Editor(pix,None)
+        editor.setStyleSheet(LIGHT_STYLE)
+        editor.show()
+        editor.tool('文字')
+        canvas=editor.canvas
+        canvas.begin_text(QPoint(60,50))
+        field=canvas.text_editor
+        field.setPlainText('移动后保留文字')
+        app.processEvents()
+        edge=QPoint(field.width()//2,0)
+        def move_field_pointer(point,buttons=Qt.MouseButton.NoButton):
+            event=QMouseEvent(QEvent.Type.MouseMove,QPointF(point),QPointF(field.mapToGlobal(point)),
+                              Qt.MouseButton.NoButton,buttons,Qt.KeyboardModifier.NoModifier)
+            app.sendEvent(field,event)
+        move_field_pointer(edge)
+        self.assertEqual(field.cursor().shape(),Qt.CursorShape.SizeAllCursor)
+        start=field.pos()
+        QTest.mousePress(field,Qt.MouseButton.LeftButton,pos=edge)
+        move_field_pointer(edge+QPoint(45,30),Qt.MouseButton.LeftButton)
+        QTest.mouseRelease(field,Qt.MouseButton.LeftButton,pos=edge)
+        self.assertEqual(field.pos(),start+QPoint(45,30))
+        self.assertEqual(field.toPlainText(),'移动后保留文字')
+        QTest.keyClick(field,Qt.Key.Key_Return,Qt.KeyboardModifier.ControlModifier)
+        mark=canvas.text_marks[0]
+        point=mark.rect().center()
+        QTest.mouseClick(canvas,Qt.MouseButton.LeftButton,pos=point)
+        self.assertEqual(canvas.selected_text,0)
+        self.assertIsNone(canvas.text_editor)
+        editor.tool('箭头')
+        app.processEvents()
+        exported=canvas.pixmap().toImage()
+        rendered=editor.grab()
+        ratio=rendered.devicePixelRatio()
+        visible=rendered.copy(QRect(canvas.mapTo(editor,QPoint())*ratio,canvas.size()*ratio)).toImage()
+        if visible.size()!=exported.size():visible=visible.scaled(exported.size())
+        self.assertNotEqual(exported,pix.toImage())
+        def red_pixels(image):
+            return sum(1 for x in range(mark.rect().left(),mark.rect().right())
+                       for y in range(mark.rect().top(),mark.rect().bottom())
+                       if (color:=image.pixelColor(x,y)).red()>180 and color.green()<140)
+        self.assertGreater(red_pixels(exported),30)
+        self.assertGreater(red_pixels(visible),30)
+        editor.tool('文字')
+        QTest.mouseDClick(canvas,Qt.MouseButton.LeftButton,pos=point)
+        self.assertEqual(canvas.text_editor.toPlainText(),'移动后保留文字')
+        canvas.text_editor.clear()
+        editor.tool('箭头')
+        self.assertEqual(canvas.text_marks[0].text,'移动后保留文字')
+        editor.close()
+
+    def test_overlay_click_and_selection_move_preserve_text(self):
+        from PySide6.QtCore import QRect
+        screen=app.primaryScreen()
+        pix=QPixmap(screen.geometry().size())
+        pix.fill(QColor('white'))
+        with patch('app.flag',return_value=False):
+            overlay=Overlay(screen,pix)
+            overlay.set_selection(QRect(50,50,460,240))
+            overlay.show()
+            overlay.tool('文字')
+            canvas=overlay.canvas
+            canvas.begin_text(QPoint(80,60))
+            canvas.text_editor.setPlainText('文字不会因选区点击消失')
+            overlay.tool('选区')
+            point=canvas.pos()+canvas.text_marks[0].rect().center()
+            QTest.mouseClick(overlay,Qt.MouseButton.LeftButton,pos=point)
+            self.assertIs(overlay.canvas,canvas)
+            self.assertEqual(len(canvas.text_marks),1)
+            QTest.mousePress(overlay,Qt.MouseButton.LeftButton,pos=point)
+            QTest.mouseMove(overlay,point+QPoint(25,20))
+            QTest.mouseRelease(overlay,Qt.MouseButton.LeftButton,pos=point+QPoint(25,20))
+            self.assertEqual(overlay.rect_selected.topLeft(),QPoint(75,70))
+            self.assertEqual(overlay.canvas.text_marks[0].text,'文字不会因选区点击消失')
+            self.assertNotEqual(overlay.canvas.pixmap().toImage(),overlay.canvas.image)
+            overlay.close()
+
+    def test_inline_ime_preedit_fits_on_the_current_line(self):
+        from PySide6.QtGui import QInputMethodEvent
+        pix=QPixmap(400,180)
+        pix.fill(QColor('white'))
+        canvas=Canvas(pix)
+        canvas.mode='文字'
+        canvas.show()
+        canvas.begin_text(QPoint(30,40))
+        editor=canvas.text_editor
+        editor.insertPlainText('已经确认的中文')
+        app.processEvents()
+        width=editor.width()
+        height=editor.height()
+        app.sendEvent(editor,QInputMethodEvent('zhongwen',[]))
+        app.processEvents()
+        self.assertTrue(editor.composing)
+        self.assertGreater(editor.width(),width)
+        self.assertEqual(editor.height(),height)
+        self.assertEqual(editor.document().firstBlock().layout().lineCount(),1)
+        self.assertEqual(editor.toPlainText(),'已经确认的中文')
+        event=QInputMethodEvent('',[])
+        event.setCommitString('中文输入')
+        app.sendEvent(editor,event)
+        app.processEvents()
+        self.assertFalse(editor.composing)
+        self.assertGreater(editor.width(),width)
+        canvas.commit_text()
+        self.assertEqual(canvas.text_marks[0].text,'已经确认的中文中文输入')
+        self.assertNotEqual(canvas.pixmap().toImage(),canvas.image)
+        canvas.close()
+
+    def test_double_click_text_in_selection_mode_reopens_it_without_finishing(self):
+        from PySide6.QtCore import QRect
+        screen=app.primaryScreen()
+        pix=QPixmap(screen.geometry().size())
+        pix.fill(QColor('white'))
+        with patch('app.flag',return_value=False):
+            overlay=Overlay(screen,pix)
+            overlay.set_selection(QRect(60,60,420,220))
+            overlay.show()
+            overlay.tool('文字')
+            canvas=overlay.canvas
+            canvas.begin_text(QPoint(36,42))
+            canvas.text_editor.setPlainText('二次编辑测试')
+            overlay.tool('选区')
+            output=[]
+            overlay.selected.connect(output.append)
+            point=canvas.pos()+canvas.text_marks[0].rect().center()
+            QTest.mouseClick(overlay,Qt.MouseButton.LeftButton,pos=point)
+            QTest.mouseDClick(overlay,Qt.MouseButton.LeftButton,pos=point)
+            self.assertEqual(output,[])
+            self.assertEqual(overlay.mode,'文字')
+            self.assertEqual(canvas.text_editor.toPlainText(),'二次编辑测试')
+            canvas.text_editor.selectAll()
+            canvas.text_editor.insertPlainText('已重新编辑')
+            QTest.keyClick(canvas.text_editor,Qt.Key.Key_Return,Qt.KeyboardModifier.ControlModifier)
+            self.assertEqual(len(canvas.text_marks),1)
+            self.assertEqual(canvas.text_marks[0].text,'已重新编辑')
+            overlay.close()
+
+    def test_export_and_import_applied_settings(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import MagicMock
+        from PySide6.QtCore import QSettings
+        from PySide6.QtGui import QKeySequence
+        from settings_ui import SettingsWindow
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as folder:
+            root=Path(folder)
+            cfg=QSettings(str(root/'settings.ini'),QSettings.Format.IniFormat)
+            cfg.setValue('capture/delay',7)
+            cfg.setValue('keys/7','F9')
+            cfg.setValue('save/path',str(root))
+            controller=MagicMock()
+            controller.hotkeys.rebind.return_value=(True,'')
+            path=root/'backup.json'
+            with patch('settings_ui.preferences',return_value=cfg), \
+                    patch('settings_ui.startup.is_enabled',return_value=False), \
+                    patch('settings_ui.startup.set_enabled'), \
+                    patch('settings_ui.QFileDialog.getSaveFileName',return_value=(str(path),'')), \
+                    patch('settings_ui.QFileDialog.getOpenFileName',return_value=(str(path),'')):
+                window=SettingsWindow(controller)
+                delay=window.bindings['capture/delay'][0]
+                delay.setValue(12)
+                window.export_config()
+                exported=json.loads(path.read_text(encoding='utf-8'))
+                self.assertEqual(exported['settings']['capture/delay'],7)
+                self.assertEqual(exported['settings']['keys/7'],'F9')
+                self.assertEqual(Path(exported['settings']['save/path']),root)
+                cfg.setValue('capture/delay',3)
+                window.key_edits[7].setKeySequence(QKeySequence('F10'))
+                window.import_config()
+                self.assertEqual(delay.value(),7)
+                self.assertEqual(window.key_edits[7].keySequence().toString(),'F9')
+                self.assertEqual(cfg.value('capture/delay',type=int),3)
+                self.assertTrue(window.apply())
+                self.assertEqual(cfg.value('capture/delay',type=int),7)
+                exported['settings']['capture/delay']=99
+                path.write_text(json.dumps(exported),encoding='utf-8')
+                window.import_config()
+                self.assertEqual(delay.value(),7)
+                self.assertIn('导入失败',window.message.text())
+                window.close()
 
     def test_selected_text_live_format_and_second_toolbar(self):
         from PySide6.QtCore import QRect,QEvent

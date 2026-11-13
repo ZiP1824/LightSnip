@@ -247,17 +247,18 @@ class ScrollCapture(QWidget):
         self.setMask(mask)
 
     def paintEvent(self,event):
-        p=QPainter(self)
-        p.drawPixmap(self.rect(),self.frozen)
-        p.fillRect(self.rect(),QColor(0,0,0,105))
-        if self.transition_cover:
-            p.save()
-            p.setClipRect(self.region)
+        with QPainter(self) as p:
             p.drawPixmap(self.rect(),self.frozen)
-            p.restore()
-        p.setPen(QPen(QColor('#3286ff'),BORDER_WIDTH))
-        p.drawRect(self.region)
-        p.end()
+            p.fillRect(self.rect(),QColor(0,0,0,105))
+            if self.transition_cover:
+                p.save()
+                try:
+                    p.setClipRect(self.region)
+                    p.drawPixmap(self.rect(),self.frozen)
+                finally:
+                    p.restore()
+            p.setPen(QPen(QColor('#3286ff'),BORDER_WIDTH))
+            p.drawRect(self.region)
         if self.transition_cover and not self.transition_scheduled:
             self.transition_scheduled=True
             QTimer.singleShot(0,self.finish_transition)
