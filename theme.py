@@ -4,10 +4,21 @@ import sys
 from PySide6.QtCore import Qt,QPoint,QRect,QRectF,QSize
 from PySide6.QtGui import QColor,QGuiApplication,QPainter
 from PySide6.QtWidgets import (QComboBox,QFontComboBox,QStyledItemDelegate,QFrame,
-    QListView,QVBoxLayout,QAbstractItemView,QStyle)
+    QListView,QVBoxLayout,QAbstractItemView,QStyle,QProxyStyle)
 from shiboken6 import isValid
 
 ROOT=Path(getattr(sys,'_MEIPASS',Path(__file__).parent))
+
+
+class TooltipStyle(QProxyStyle):
+    """Give every icon the same deliberate hover delay, including repeat hovers."""
+    def __init__(self):
+        super().__init__('Fusion')
+
+    def styleHint(self,hint,option=None,widget=None,returnData=None):
+        if hint==QStyle.StyleHint.SH_ToolTip_WakeUpDelay:return 2000
+        if hint==QStyle.StyleHint.SH_ToolTip_FallAsleepDelay:return 0
+        return super().styleHint(hint,option,widget,returnData)
 
 
 class _OptionDelegate(QStyledItemDelegate):

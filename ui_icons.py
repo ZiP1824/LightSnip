@@ -3,8 +3,16 @@ import sys
 from PySide6.QtCore import Qt,QSize,QByteArray
 from PySide6.QtGui import QIcon,QPixmap,QPainter,QColor
 from PySide6.QtSvg import QSvgRenderer
+from PySide6.QtWidgets import QToolBar,QToolButton
 
 ROOT=Path(getattr(sys,'_MEIPASS',Path(__file__).parent))
+
+
+class IconToolBar(QToolBar):
+    def __init__(self,*args,**kwargs):
+        super().__init__(*args,**kwargs)
+        extension=self.findChild(QToolButton,'qt_toolbar_ext_button')
+        if extension is not None:extension.setToolTip('更多工具')
 
 
 def lucide(name,color='#000000',size=20):

@@ -157,13 +157,17 @@ class RegionScanner(QObject):
             QThreadPool.globalInstance().start(control)
         root=next((r for h,r in self.catalog.windows if h==handle),target.native)
         native=root.intersected(target.mapping.native)
-        pix=frozen.copy(target.mapping.frozen_rect(native,frozen.size()))
-        buffer=QBuffer()
-        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
-        pix.save(buffer,'PNG')
-        data=bytes(buffer.data())
-        sx,sy=native.width()/pix.width(),native.height()/pix.height()
+        crop=target.mapping.frozen_rect(native,frozen.size())
+        if crop.isEmpty():return
+        # Convert on the GUI thread; move cropping and encoding off the path
+        # that shows the screenshot overlay.
+        image=frozen.toImage()
+        sx,sy=native.width()/crop.width(),native.height()/crop.height()
         def visual():
+            buffer=QBuffer()
+            buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+            if not image.copy(crop).save(buffer,'PNG'):return []
+            data=bytes(buffer.data())
             return [(kind,QRect(native.x()+round(r.x()*sx),native.y()+round(r.y()*sy),round(r.width()*sx),round(r.height()*sy))) for kind,r in detect_text_regions(data)]
         self.active_jobs+=1
         QThreadPool.globalInstance().start(ScanJob(handle,visual,self.signals,self.cancel))

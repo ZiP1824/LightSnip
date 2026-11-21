@@ -8,7 +8,7 @@ LightSnip is a no-account Windows screenshot application with delayed capture, s
 
 - Region capture with move and resize controls; automatic window, control and text-region detection.
 - Delayed screenshots: configurable 1–60 second countdown for menus and popups; a compact, translucent centered card with shadow and directional easing to avoid the pointer. It does not steal focus and allows clicks through.
-- Scrolling screenshots inside a selected region, with vertical/horizontal stitching and live preview.
+- Region-only scrolling screenshots with smooth automatic scrolling in all four directions, manual scrolling, live preview and automatic end detection. The page outside the selection stays live under a translucent dimming mask. Hover over small icons for two seconds to see their names.
 - Local OCR with an image preview and editable recognized text.
 - Shapes, multiple arrow styles, freehand drawing, highlighter, text and numbered markers.
 - Rectangle and freehand mosaic tools, with separate brush diameter and pixel-block controls.

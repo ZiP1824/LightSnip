@@ -19,7 +19,7 @@
 | 区域截图 / 屏幕截图 | 拖动框选；选区内部可整体移动，边缘可调整大小 |
 | 延时截图 / 弹窗截图 | 1–60 秒倒计时，先启动再打开弹窗；居中半透明小卡片，四方向缓动避让鼠标 |
 | 窗口与内部元素识别 | 悬停预选窗口、控件或文字区域；滚轮切换上下层，Tab 切换整窗 |
-| 滚动长截图 / 长图拼接 | 框选后按 L，在选区内滚动；支持纵向、横向及实时预览 |
+| 滚动长截图 / 长图拼接 | 框选后按 L；支持上下左右自动平滑滚动、手动滚动及实时预览，选区外也同步显示页面 |
 | 本地 OCR 文字识别 | 提取中英文文字，左图右文，可编辑、复制，识别过程不联网 |
 | 文字与序号 | 已确认文字可通过「编辑文字」列表修改；点击序号选中并删除，下次添加补回空缺号码 |
 | 配置备份 | 在「配置 → 系统」导入或导出 JSON，导入后点击应用 |
@@ -35,9 +35,15 @@
 
 ![马赛克画笔沿路径涂抹，并支持笔刷粗细和颗粒大小调节](docs/images/mosaic-brush.png)
 
+## v0.44 长截图改进
+
+框选后按 **L**，选择向下、向右、向上或向左，再点击「自动滚动截图」。滚动和拼接同时进行，速度随实际内容位移调整；再次点击可停止，画面不再滚动时自动停止。复制或保存前会补齐最后的滚动内容。
+
+长截图期间，选区外也显示实时页面，只叠加半透明暗色遮罩；蓝框和工具栏保持固定，最终只拼接框内内容。普通截图仍使用冻结画面。小图标悬停 2 秒显示名称。只支持整格滚轮的软件仍按自身方式滚动，不接收窗口滚轮消息的软件可改为手动滚动。
+
 ## 下载与开始使用
 
-1. 到 [Releases](https://github.com/ZiP1824/LightSnip/releases/latest) 下载 `LightSnip-v0.40-windows-x64.zip`。
+1. 到 [Releases](https://github.com/ZiP1824/LightSnip/releases/latest) 下载 `LightSnip-v0.44-windows-x64.zip`。
 2. 解压整个 `LightSnip` 文件夹，运行 `LightSnip.exe`。
 3. 默认按 **Ctrl+Shift+1** 开始截图，框选后标注、复制或保存。
 
@@ -102,7 +108,7 @@ python -m venv .venv
 测试：
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest test_delayed_capture test_app test_startup test_ocr_layout test_scroll_stitcher test_file_names test_save_locations test_theme test_window_detection test_element_detection test_mosaic test_floating_placement -q
+.\.venv\Scripts\python.exe -m unittest test_delayed_capture test_app test_startup test_ocr_layout test_scroll_stitcher test_auto_scroll test_file_names test_save_locations test_theme test_window_detection test_element_detection test_mosaic test_floating_placement -q
 ```
 
 ## 开源许可与开发者

@@ -31,7 +31,7 @@ jobs:
           .\.venv\Scripts\python.exe -m pip install -r requirements-build.txt
       - name: Test
         shell: pwsh
-        run: .\.venv\Scripts\python.exe -m unittest test_delayed_capture test_app test_startup test_ocr_layout test_scroll_stitcher test_file_names test_save_locations test_theme test_window_detection test_element_detection test_mosaic test_floating_placement -q
+        run: .\.venv\Scripts\python.exe -m unittest test_delayed_capture test_app test_startup test_ocr_layout test_scroll_stitcher test_auto_scroll test_file_names test_save_locations test_theme test_window_detection test_element_detection test_mosaic test_floating_placement -q
       - name: Build portable application
         shell: pwsh
         run: .\build.ps1

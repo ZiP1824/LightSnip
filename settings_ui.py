@@ -284,7 +284,7 @@ class SettingsWindow(QDialog):
 
     def about_page(self):
         f,l=self.card()
-        l.addWidget(QLabel('轻截 LightSnip 0.40'))
+        l.addWidget(QLabel('轻截 LightSnip 0.44'))
         developer=QLabel('开发者：ZiP1824')
         developer.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         l.addWidget(developer)

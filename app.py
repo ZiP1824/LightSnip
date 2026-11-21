@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (QApplication, QWidget, QMainWindow, QLabel,
 from services import recognize, translate
 from delayed_capture import CaptureCountdown
 from settings_ui import preferences, flag, keys, LIGHT_STYLE, SettingsWindow,CAPTURE_ONLY_ACTIONS
-from ui_icons import lucide, TOOLBAR_STYLE
+from ui_icons import lucide, TOOLBAR_STYLE,IconToolBar as QToolBar
 from annotation_tools import AnnotationOptions,SelectionBorder,draw_arrow,tool_cursor,badge_icon,BORDER_WIDTH
 from theme import ThemedComboBox
 from window_detection import snapshot_windows
@@ -1216,6 +1216,7 @@ class Overlay(BasicOverlay):
         morebutton=QToolButton()
         morebutton.setIconSize(QSize(20,20))
         morebutton.setIcon(lucide('ellipsis'))
+        morebutton.setToolTip('更多操作')
         morebutton.setMenu(more)
         morebutton.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.bar.addWidget(morebutton)
@@ -2022,9 +2023,15 @@ class Home(QMainWindow):
             return
         self.capture_pending=True
         self.was_visible=self.isVisible()
+        needs_hide=self.was_visible or bool(self.settings_window and self.settings_window.isVisible())
+        needs_hide=needs_hide or self.tray_menu.isVisible()
         self.hide()
         if self.settings_window:self.settings_window.hide()
-        QTimer.singleShot(220,self.begin_capture)
+        # Wait for the compositor only when our own UI was visible.
+        if needs_hide:
+            QTimer.singleShot(220,self.begin_capture)
+        else:
+            self.begin_capture()
 
     def begin_capture(self):
         self.capture_pending=False
@@ -2153,7 +2160,8 @@ def main():
             (output/'element-test-error.txt').write_text(traceback.format_exc(),encoding='utf-8')
             return
     app=QApplication(sys.argv)
-    app.setStyle('Fusion')
+    from theme import TooltipStyle
+    app.setStyle(TooltipStyle())
     app.setApplicationName('LightSnip')
     app.setOrganizationName('LightSnip')
     app.setStyleSheet(LIGHT_STYLE)

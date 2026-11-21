@@ -93,6 +93,7 @@ class PreviewSelector(QToolButton):
         self.kind=kind
         self.names=names
         self.name=names[0]
+        self.setToolTip(self.name)
         self.setCursor(Qt.CursorShape.ArrowCursor)
         self.setIconSize(QSize(78,24))
         self.setFixedSize(86,32)
